@@ -1,0 +1,23 @@
+{
+	"name": "Bellwake",
+	"version": "1.0.0",
+	"description": "",
+	"main": "index.js",
+	"scripts": {
+		"start": "node src/app.js",
+		"dev": "node --watch src/app.js",
+		"setup:env": "bash scripts/setup-env.sh",
+		"setup:broker": "sudo bash scripts/setup-mosquitto.sh"
+	},
+	"keywords": [],
+	"author": "Ivan Ovsyannikov",
+	"license": "MIT",
+	"type": "module",
+	"dependencies": {
+		"dotenv": "^17.4.2",
+		"express": "^5.2.1",
+		"helmet": "^8.3.0",
+		"mqtt": "^5.16.0",
+		"mysql2": "^3.24.4"
+	}
+}
