@@ -1,14 +1,28 @@
 import "dotenv/config";
+import { createServer } from "node:http";
 import express from "express";
 import helmet from "helmet";
+import { Server } from "socket.io";
 import pool from "./database.js";
 import enrollmentRouter from "./routes/enrollment.js";
 import notificationsRouter from "./routes/notifications.js";
 import pairingRouter from "./routes/pairing.js";
+import { registerAdminNotificationHandlers } from "./socket/adminNotifications.js";
 
 const app = express();
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PORT ?? 3102);
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+	path: "/api/socket.io",
+	transports: ["websocket"],
+});
+
+const adminNamespace = io.of("/admin");
+adminNamespace.on("connection", (socket) => {
+	// TODO: protect this namespace with a real administrator session before production.
+	registerAdminNotificationHandlers(adminNamespace, socket);
+});
 
 app.disable("x-powered-by");
 app.set("trust proxy", "loopback");
@@ -56,6 +70,6 @@ app.use((error, req, res, next) => {
 	});
 });
 
-app.listen(PORT, HOST, () => {
+httpServer.listen(PORT, HOST, () => {
 	console.log(`Bellwake API listening on http://${HOST}:${PORT}`);
 });

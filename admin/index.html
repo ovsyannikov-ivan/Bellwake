@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="description" content="Панель администратора Bellwake" />
+		<link rel="icon" href="/favicon.ico" sizes="32x32" />
+		<link rel="apple-touch-icon" href="/bellwake-icon-256.png" />
+		<title>Bellwake Admin</title>
+		<script>
+			(() => {
+				const storageKey = "bellwake-admin-theme";
+				const allowedModes = ["light", "dark", "auto"];
+				let mode = "auto";
+
+				try {
+					const storedMode = localStorage.getItem(storageKey);
+					if (allowedModes.includes(storedMode)) mode = storedMode;
+				} catch {
+					// The system theme remains the safe default when storage is unavailable.
+				}
+
+				const resolvedTheme = mode === "auto"
+					? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+					: mode;
+
+				document.documentElement.dataset.bsThemeMode = mode;
+				document.documentElement.setAttribute("data-bs-theme", resolvedTheme);
+			})();
+		</script>
+	</head>
+	<body>
+		<div id="app"></div>
+		<script type="module" src="/src/main.js"></script>
+	</body>
+</html>
