@@ -72,7 +72,7 @@ const initialize = () => {
 				orderable: false,
 				searchable: false,
 				className: "text-end",
-				render: (id) => `<button type="button" class="btn btn-sm btn-outline-secondary edit-notification text-nowrap" data-id="${Number(id)}"><i class="bi bi-pencil me-1"></i>Изменить</button>`,
+				render: (id) => `<button type="button" class="btn btn-sm btn-outline-secondary edit-notification text-nowrap mt-1" data-id="${Number(id)}"><i class="bi bi-pencil me-1"></i>Изменить</button>`,
 			},
 		],
 		columnDefs: [

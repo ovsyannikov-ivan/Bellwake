@@ -19,6 +19,12 @@ input,
 select {
 	font: inherit;
 }
+table {
+	td {
+		vertical-align: top;
+	}
+}
+
 .app {
 	&-shell {
 		min-height: 100vh;
@@ -250,7 +256,7 @@ select {
 	}
 }
 .modal-title {
-	font-size: 1.8rem;
+	font-size: 1.8rem !important;
 	font-weight: 300;
 }
 .modal-body {
@@ -258,6 +264,9 @@ select {
 }
 .modal-footer {
 	padding: 1rem 1.25rem;
+	& > * {
+		margin: 0;
+	}
 }
 .modal-footer,
 .modal-dialog {
@@ -442,12 +451,89 @@ table.dataTable {
 	color: var(--bs-body-color) !important;
 }
 
+.bellwake-editor-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 34px;
+	height: 34px;
+	padding: 0;
+	border-color: transparent;
+	color: var(--bs-secondary-color);
+	background: transparent;
+	&:hover {
+		color: var(--bs-body-color);
+		background: var(--bs-secondary-bg);
+		border-color: transparent;
+	}
+	&.active {
+		color: var(--bs-primary);
+		background: rgba(var(--bs-primary-rgb), 0.15);
+		border-color: transparent;
+	}
+	i {
+		font-size: 1.05rem;
+		line-height: 1;
+	}
+}
+
+.toastui-editor-toolbar {
+	.toastui-editor-toolbar-group {
+		display: flex;
+		align-items: center;
+		height: 100%;
+		> * {
+			align-self: center;
+		}
+	}
+
+	.bellwake-editor-toolbar-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		margin: -4px 0 0 0 !important;
+		padding: 0 !important;
+		vertical-align: middle;
+		line-height: 1;
+		color: var(--bs-body-color);
+		.bi {
+			display: block;
+			line-height: 1;
+		}
+	}
+}
+
+.toastui-editor-toolbar {
+	.toastui-editor-toolbar-icons.link {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		margin: 0 !important;
+		padding: 0 !important;
+		line-height: 1;
+	}
+}
+
+.toastui-editor-defaultUI-toolbar {
+	button {
+		border-radius: var(--bs-border-radius) !important;
+		border: 1px solid var(--bs-body-bg);
+		&:active,
+		&:focus,
+		&:hover {
+			border-color: var(--bs-secondary-bg) !important;
+			background-color: rgba(var(--bs-secondary-bg-rgb), 0.75) !important;
+		}
+	}
+}
+
 [data-bs-theme="dark"] {
 	--bellwake-surface: #171a20;
 	.toastui-editor {
-		&-defaultUI button:not(.bellwake-h2-button) {
-			filter: invert(0.9) hue-rotate(180deg);
-		}
 		&-popup,
 		&-popup-body {
 			border-color: var(--bs-border-color) !important;
@@ -459,6 +545,10 @@ table.dataTable {
 			background: var(--bs-tertiary-bg) !important;
 			color: var(--bs-body-color) !important;
 		}
+	}
+	.toastui-editor-defaultUI-toolbar {
+		background-color: var(--bs-body-bg);
+		border-color: var(--bs-border-color);
 	}
 }
 
