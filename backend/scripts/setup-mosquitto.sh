@@ -467,7 +467,7 @@ ensure_client() {
 echo "==> Настройка роли Bellwake backend..."
 
 ensure_role "bellwake-publisher"
-ensure_acl "bellwake-publisher" "publishClientSend" "${MQTT_TOPIC}" "allow" 10
+ensure_acl "bellwake-publisher" "publishClientSend" "${MQTT_TOPIC}/+" "allow" 10
 
 #
 # Настройка Bellwake агента
@@ -476,8 +476,8 @@ ensure_acl "bellwake-publisher" "publishClientSend" "${MQTT_TOPIC}" "allow" 10
 echo "==> Настройка роли Bellwake агента..."
 
 ensure_role "bellwake-agent"
-ensure_acl "bellwake-agent" "subscribeLiteral" "${MQTT_TOPIC}" "allow" 10
-ensure_acl "bellwake-agent" "publishClientReceive" "${MQTT_TOPIC}" "allow" 10
+ensure_acl "bellwake-agent" "subscribeLiteral" "${MQTT_TOPIC}/+" "allow" 10
+ensure_acl "bellwake-agent" "publishClientReceive" "${MQTT_TOPIC}/+" "allow" 10
 
 #
 # MQTT пользователи

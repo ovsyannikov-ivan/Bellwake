@@ -5,6 +5,7 @@ import "datatables.net-responsive-bs5";
 import { socketServiceKey } from "../symbols.js";
 import { socketErrorHandlerKey } from "../plugins/plugin.socketErrorHandler.js";
 import { debounce, socketEmitAsync } from "../services/service.helpers.js";
+import { formatUtcIsoInBrowserTimeZone } from "../services/service.datetime.js";
 
 const emit = defineEmits(["create", "edit", "changed"]);
 const { socket } = inject(socketServiceKey);
@@ -20,9 +21,10 @@ const escapeHtml = (value) => {
 
 const formatDate = (value) => {
 	if (!value) return '<span class="text-body-tertiary">—</span>';
-	const [date, time] = String(value).split("T");
-	const [year, month, day] = date.split("-");
-	return `${day}.${month}.${year}<span class="d-block small text-body-secondary">${time}</span>`;
+	const formatted = formatUtcIsoInBrowserTimeZone(value);
+	if (!formatted) return '<span class="text-body-tertiary">—</span>';
+	const [date, time] = formatted.split("T");
+	return `${date}<span class="d-block small text-body-secondary">${time}</span>`;
 };
 
 const badges = {

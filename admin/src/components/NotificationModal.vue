@@ -1,12 +1,16 @@
 <script setup>
 import { inject, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { Modal } from "bootstrap";
+import { VueDatePicker } from "@vuepic/vue-datepicker";
+import "@vuepic/vue-datepicker/dist/main.css";
+import { ru } from "date-fns/locale/ru";
 import MarkdownEditor from "./MarkdownEditor.vue";
 import { socketServiceKey } from "../symbols.js";
 import { socketEmitAsync } from "../services/service.helpers.js";
 import { modalErrorKey } from "../plugins/plugin.modalError.js";
 import { useLoading } from "../plugins/plugin.loadingBackdrop.js";
 import { socketErrorHandlerKey } from "../plugins/plugin.socketErrorHandler.js";
+import { localDateToUtcIso, utcIsoToLocalDate } from "../services/service.datetime.js";
 
 const emit = defineEmits(["saved"]);
 const { socket } = inject(socketServiceKey);
@@ -25,9 +29,42 @@ const bodyInvalid = ref(false);
 const codeVisible = ref(false);
 const markdownCode = ref("");
 const externalChange = ref(false);
+const datePickerDark = ref(document.documentElement.getAttribute("data-bs-theme") === "dark");
 let modal;
+let themeObserver;
 
-const emptyForm = () => ({ id: null, title: "", severity: "info", ackRequired: true, state: "draft", startsAt: "", expiresAt: "" });
+const datePickerMonthNames = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
+const datePickerDayNames = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+const datePickerLocale = {
+	...ru,
+	localize: {
+		...ru.localize,
+		month: (month, options) => (options?.width === "abbreviated" ? datePickerMonthNames[month] : ru.localize.month(month, options)),
+	},
+};
+const datePickerFormats = { month: "MMM", input: "dd.MM.yyyy HH:mm", preview: "dd.MM.yyyy HH:mm" };
+const datePickerTimeConfig = { is24: true, enableSeconds: false };
+const datePickerTextInput = {
+	format: "dd.MM.yyyy HH:mm",
+	maskFormat: "DD.MM.YYYY hh:mm",
+	openMenu: "open",
+	applyOnBlur: true,
+	enterSubmit: true,
+	tabSubmit: true,
+};
+const datePickerActionRow = {
+	showNow: true,
+	showPreview: true,
+	selectBtnLabel: "Выбрать",
+	cancelBtnLabel: "Отмена",
+	nowBtnLabel: "Сейчас",
+};
+const datePickerConfig = { allowPreventDefault: true };
+const datePickerFloating = { strategy: "fixed", flip: true, shift: true };
+const startsAtInputAttrs = { id: "starts-at", autocomplete: "off", inputmode: "text" };
+const expiresAtInputAttrs = { id: "expires-at", autocomplete: "off", inputmode: "text" };
+
+const emptyForm = () => ({ id: null, title: "", severity: "info", ackRequired: true, state: "draft", startsAt: null, expiresAt: null });
 const form = reactive(emptyForm());
 
 const resetForm = () => {
@@ -66,8 +103,8 @@ const openEdit = async (id) => {
 			severity: notification.severity,
 			ackRequired: notification.ackRequired,
 			state: notification.state,
-			startsAt: notification.startsAt ?? "",
-			expiresAt: notification.expiresAt ?? "",
+			startsAt: utcIsoToLocalDate(notification.startsAt),
+			expiresAt: utcIsoToLocalDate(notification.expiresAt),
 		});
 		editorRef.value?.setMarkdown(notification.body);
 	} catch {
@@ -135,8 +172,8 @@ const save = async () => {
 					severity: form.severity,
 					ackRequired: form.ackRequired,
 					state: form.state,
-					startsAt: form.startsAt || null,
-					expiresAt: form.expiresAt || null,
+					startsAt: localDateToUtcIso(form.startsAt),
+					expiresAt: localDateToUtcIso(form.expiresAt),
 				}),
 			"Не удалось сохранить уведомление",
 		);
@@ -162,10 +199,15 @@ const onHidden = () => {
 onMounted(() => {
 	modalElement.value.addEventListener("shown.bs.modal", onShown);
 	modalElement.value.addEventListener("hidden.bs.modal", onHidden);
+	themeObserver = new MutationObserver(() => {
+		datePickerDark.value = document.documentElement.getAttribute("data-bs-theme") === "dark";
+	});
+	themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-bs-theme"] });
 });
 onBeforeUnmount(() => {
 	modalElement.value?.removeEventListener("shown.bs.modal", onShown);
 	modalElement.value?.removeEventListener("hidden.bs.modal", onHidden);
+	themeObserver?.disconnect();
 	modal?.dispose();
 });
 defineExpose({ openCreate, openEdit, notifyExternalChange });
@@ -258,12 +300,46 @@ defineExpose({ openCreate, openEdit, notifyExternalChange });
 								</div>
 								<div class="row g-3">
 									<div class="col-md-6">
-										<label for="starts-at" class="form-label fw-semibold">Начало действия</label><input id="starts-at" v-model="form.startsAt" type="datetime-local" class="form-control" />
+										<label for="starts-at" class="form-label fw-semibold">Начало действия</label>
+										<VueDatePicker
+											v-model="form.startsAt"
+											class="bellwake-datepicker"
+											:locale="datePickerLocale"
+											:formats="datePickerFormats"
+											:day-names="datePickerDayNames"
+											:week-start="1"
+											:time-config="datePickerTimeConfig"
+											:text-input="datePickerTextInput"
+											:action-row="datePickerActionRow"
+											:config="datePickerConfig"
+											:input-attrs="startsAtInputAttrs"
+											:floating="datePickerFloating"
+											:dark="datePickerDark"
+											placeholder="ДД.ММ.ГГГГ ЧЧ:ММ"
+											teleport
+										/>
 										<div class="form-text">Оставьте пустым, если ограничение не требуется.</div>
 									</div>
 									<div class="col-md-6">
-										<label for="expires-at" class="form-label fw-semibold">Окончание действия</label
-										><input id="expires-at" v-model="form.expiresAt" type="datetime-local" class="form-control" :min="form.startsAt || undefined" />
+										<label for="expires-at" class="form-label fw-semibold">Окончание действия</label>
+										<VueDatePicker
+											v-model="form.expiresAt"
+											class="bellwake-datepicker"
+											:locale="datePickerLocale"
+											:formats="datePickerFormats"
+											:day-names="datePickerDayNames"
+											:week-start="1"
+											:time-config="datePickerTimeConfig"
+											:text-input="datePickerTextInput"
+											:action-row="datePickerActionRow"
+											:config="datePickerConfig"
+											:input-attrs="expiresAtInputAttrs"
+											:floating="datePickerFloating"
+											:dark="datePickerDark"
+											:min-date="form.startsAt || undefined"
+											placeholder="ДД.ММ.ГГГГ ЧЧ:ММ"
+											teleport
+										/>
 										<div class="form-text">Дата указывается в локальном времени организации.</div>
 									</div>
 								</div>
@@ -364,6 +440,27 @@ defineExpose({ openCreate, openEdit, notifyExternalChange });
 	}
 }
 
+.bellwake-datepicker {
+	&:focus-within {
+		z-index: 1;
+	}
+
+	:deep(.dp--input-wrap) {
+		width: calc(100% + 0.5rem);
+		margin: -0.25rem;
+		padding: 0.25rem;
+		box-sizing: border-box;
+	}
+
+	:deep(.dp--input) {
+		min-height: calc(1.5em + 0.75rem + var(--bs-border-width) * 2);
+	}
+
+	:deep(.dp--input-focus) {
+		box-shadow: 0 0 0 0.25rem rgba(var(--bs-primary-rgb), 0.25);
+	}
+}
+
 @media (max-width: 575.98px) {
 	.notification-modal {
 		&-dialog {
@@ -380,6 +477,58 @@ defineExpose({ openCreate, openEdit, notifyExternalChange });
 		.notification-stepper {
 			gap: 0.375rem !important;
 			font-size: 0.8125rem;
+		}
+	}
+}
+</style>
+
+<style lang="scss">
+.dp--theme-light,
+.dp--theme-dark {
+	--dp-font-family: var(--bs-font-sans-serif);
+	--dp-background-color: var(--bs-body-bg);
+	--dp-text-color: var(--bs-body-color);
+	--dp-hover-color: var(--bs-tertiary-bg);
+	--dp-hover-text-color: var(--bs-body-color);
+	--dp-hover-icon-color: var(--bs-body-color);
+	--dp-primary-color: var(--bs-primary);
+	--dp-primary-disabled-color: rgba(var(--bs-primary-rgb), 0.5);
+	--dp-primary-text-color: var(--bs-white);
+	--dp-secondary-color: var(--bs-secondary-color);
+	--dp-border-color: var(--bs-border-color);
+	--dp-menu-border-color: var(--bs-border-color);
+	--dp-border-color-hover: var(--bs-secondary-color);
+	--dp-border-color-focus: var(--bs-primary);
+	--dp-disabled-color: var(--bs-secondary-bg);
+	--dp-disabled-color-text: var(--bs-secondary-color);
+	--dp-scroll-bar-background: var(--bs-tertiary-bg);
+	--dp-scroll-bar-color: var(--bs-secondary-color);
+	--dp-icon-color: var(--bs-body-color);
+	--dp-danger-color: var(--bs-danger);
+	--dp-highlight-color: rgba(var(--bs-primary-rgb), 0.12);
+	--dp-border-radius: var(--bs-border-radius);
+	--dp-cell-border-radius: var(--bs-border-radius-sm);
+	--dp-font-size: 1rem;
+	--dp-input-padding: 0.375rem 2.25rem;
+	--dp-menu-min-width: min(22rem, calc(100vw - 1rem));
+}
+
+.dp--menu {
+	box-shadow: var(--bs-box-shadow-lg);
+}
+
+.dp--overlay-absolute {
+	border-start-start-radius: var(--dp-border-radius);
+	border-start-end-radius: var(--dp-border-radius);
+}
+
+@media (max-width: 379.98px) {
+	.dp--action-row {
+		flex-wrap: wrap;
+		gap: 0.5rem;
+
+		.dp--selection-preview {
+			flex: 1 0 100%;
 		}
 	}
 }

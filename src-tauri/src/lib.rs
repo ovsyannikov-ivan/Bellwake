@@ -1,6 +1,10 @@
 use sha2::{Digest, Sha256};
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
-use tauri::Manager;
+use std::sync::Mutex;
+use std::time::Duration;
+use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS, Transport};
+use tauri::{Emitter, Manager};
 
 mod relay;
 
@@ -39,7 +43,7 @@ struct AcknowledgeResult {
     client: ClientIdentity,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MqttSettings {
 	host: String,
@@ -56,6 +60,232 @@ struct ClientSettings {
 
 	#[serde(default)]
 	mqtt: Option<MqttSettings>,
+}
+
+/*
+ * Rust отвечает за доставку уведомлений даже тогда, когда WebView скрыт.
+ * Retained-сообщение MQTT означает активное уведомление, а пустой payload отменяет его.
+ */
+#[derive(Default)]
+struct NotificationQueue {
+    pending: VecDeque<u64>,
+    acknowledged_this_run: HashSet<u64>,
+}
+
+#[derive(Default)]
+struct MqttRuntime {
+    queue: Mutex<NotificationQueue>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MqttNotificationPayload {
+    notification_id: u64,
+}
+
+fn pending_ids(app: &tauri::AppHandle) -> Result<Vec<u64>, String> {
+    let runtime = app.state::<MqttRuntime>();
+    let queue = runtime.queue.lock().map_err(|_| "Notification queue lock poisoned".to_string())?;
+    Ok(queue.pending.iter().copied().collect())
+}
+
+fn emit_queue_changed(app: &tauri::AppHandle) {
+    // События пробуждают Vue; актуальный снимок очереди всегда можно получить из Rust.
+    if let Err(error) = app.emit("bellwake-notification", ()) {
+        eprintln!("Unable to emit Bellwake queue event: {error}");
+    }
+}
+
+fn clear_pending(app: &tauri::AppHandle, clear_acknowledgements: bool) {
+    let runtime = app.state::<MqttRuntime>();
+    let changed = match runtime.queue.lock() {
+        Ok(mut queue) => {
+            let changed = !queue.pending.is_empty();
+            queue.pending.clear();
+            if clear_acknowledgements {
+                queue.acknowledged_this_run.clear();
+            }
+            changed
+        }
+        Err(_) => {
+            eprintln!("Notification queue lock poisoned");
+            return;
+        }
+    };
+    if changed { emit_queue_changed(app); }
+}
+
+fn upsert_notification(app: &tauri::AppHandle, id: u64) {
+    let runtime = app.state::<MqttRuntime>();
+    let should_emit = match runtime.queue.lock() {
+        Ok(mut queue) => {
+            if queue.acknowledged_this_run.contains(&id) {
+                false
+            } else {
+                if !queue.pending.contains(&id) {
+                    queue.pending.push_back(id);
+                }
+                // Также обновляем содержимое, если этот ID был опубликован повторно после редактирования.
+                true
+            }
+        }
+        Err(_) => {
+            eprintln!("Notification queue lock poisoned");
+            return;
+        }
+    };
+    if should_emit {
+        /*
+         * Rust отвечает за доставку и очередь ожидающих уведомлений,
+         * а Vue — за отображение окна.
+         * Окно здесь не показываем: сначала Vue загружает уведомление через REST,
+         * формирует интерфейс, изменяет размер окна и только после этого показывает его.
+         */
+        emit_queue_changed(app);
+    }
+}
+
+fn remove_notification(app: &tauri::AppHandle, id: u64) {
+    let runtime = app.state::<MqttRuntime>();
+    let changed = match runtime.queue.lock() {
+        Ok(mut queue) => {
+            let before = queue.pending.len();
+            queue.pending.retain(|current| *current != id);
+            queue.acknowledged_this_run.remove(&id);
+            queue.pending.len() != before
+        }
+        Err(_) => {
+            eprintln!("Notification queue lock poisoned");
+            return;
+        }
+    };
+    if changed { emit_queue_changed(app); }
+}
+
+#[tauri::command]
+fn get_pending_notification_ids(app: tauri::AppHandle) -> Result<Vec<u64>, String> {
+    pending_ids(&app)
+}
+
+// Вызывается из Vue только ПОСЛЕ успешного acknowledge_notification.
+#[tauri::command]
+fn dismiss_notification(app: tauri::AppHandle, notification_id: u64) -> Result<(), String> {
+    let runtime = app.state::<MqttRuntime>();
+    {
+        let mut queue = runtime.queue.lock().map_err(|_| "Notification queue lock poisoned".to_string())?;
+        queue.pending.retain(|id| *id != notification_id);
+        queue.acknowledged_this_run.insert(notification_id);
+    }
+    emit_queue_changed(&app);
+    Ok(())
+}
+
+async fn mqtt_connection(app: tauri::AppHandle, mqtt: MqttSettings, password: String) {
+    let root = mqtt.topic.trim_end_matches('/');
+    if root.is_empty() {
+        eprintln!("Bellwake MQTT topic must not be empty");
+        return;
+    }
+    let filter = format!("{root}/+");
+    let prefix = format!("{root}/");
+    let mut options = MqttOptions::new(mqtt.client_id.clone(), mqtt.host.clone(), mqtt.port);
+    options.set_credentials(mqtt.username.clone(), password);
+    options.set_transport(Transport::tls_with_default_config());
+    options.set_keep_alive(Duration::from_secs(30));
+    options.set_clean_session(true);
+
+    let (client, mut eventloop) = AsyncClient::new(options, 32);
+    loop {
+        match eventloop.poll().await {
+            Ok(Event::Incoming(Incoming::ConnAck(_))) => {
+                /*
+                 * При КАЖДОМ переподключении заново собираем очередь
+                 * из текущего набора retained-сообщений брокера.
+                 * Так из очереди исчезают ID уведомлений, срок которых истёк, пока клиент был офлайн.
+                 */
+                clear_pending(&app, false);
+                if let Err(error) = client.subscribe(filter.clone(), QoS::AtLeastOnce).await {
+                    eprintln!("Bellwake MQTT subscription failed: {error}");
+                } else {
+                    println!("Bellwake MQTT subscribed to {filter}");
+                }
+            }
+            Ok(Event::Incoming(Incoming::Publish(publish))) => {
+                let Some(suffix) = publish.topic.strip_prefix(&prefix) else { continue };
+                let Ok(topic_id) = suffix.parse::<u64>() else { continue };
+                if topic_id == 0 || suffix.contains('/') { continue; }
+
+                if publish.payload.is_empty() {
+                    remove_notification(&app, topic_id);
+                    continue;
+                }
+                match serde_json::from_slice::<MqttNotificationPayload>(&publish.payload) {
+                    Ok(data) if data.notification_id == topic_id => {
+                        upsert_notification(&app, topic_id);
+                    }
+                    Ok(_) => eprintln!("Bellwake MQTT topic/payload ID mismatch on {}", publish.topic),
+                    Err(error) => eprintln!("Bellwake MQTT invalid payload on {}: {error}", publish.topic),
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("Bellwake MQTT connection error: {error}; retrying...");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
+/*
+ * Работает вместе с процессом Tauri, а НЕ с окном.
+ * После enrollment, включая QR-подключение, настройки записываются
+ * в settings.json и Keychain, после чего фоновый MQTT-обработчик подхватывает их.
+ */
+async fn mqtt_supervisor(app: tauri::AppHandle) {
+    let mut running: Option<(MqttSettings, String, tauri::async_runtime::JoinHandle<()>)> = None;
+
+    loop {
+        let desired = match load_client_settings_internal(&app) {
+            Ok(Some(settings)) => match settings.mqtt {
+                Some(mqtt) => match load_secret(KEYRING_MQTT_PASSWORD) {
+                    Ok(Some(password)) => Some((mqtt, password)),
+                    Ok(None) => None,
+                    Err(error) => {
+                        eprintln!("Bellwake MQTT credential error: {error}");
+                        None
+                    }
+                },
+                None => None,
+            },
+            Ok(None) => None,
+            Err(error) => {
+                eprintln!("Bellwake MQTT settings error: {error}");
+                None
+            }
+        };
+
+        let changed = match (&running, &desired) {
+            (None, None) => false,
+            (Some((current_mqtt, current_password, _)), Some((next_mqtt, next_password))) => {
+                current_mqtt != next_mqtt || current_password != next_password
+            }
+            _ => true,
+        };
+
+        if changed {
+            if let Some((_, _, task)) = running.take() {
+                task.abort();
+            }
+            clear_pending(&app, true);
+            if let Some((mqtt, password)) = desired {
+                let task = tauri::async_runtime::spawn(mqtt_connection(
+                    app.clone(), mqtt.clone(), password.clone(),
+                ));
+                running = Some((mqtt, password, task));
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
 }
 
 fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
@@ -569,16 +799,41 @@ async fn get_notification(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-		.manage(relay::RelayState::default())
+        .manage(relay::RelayState::default())
+        .manage(MqttRuntime::default())
+        .setup(|app| {
+            /*
+             * Bellwake работает как фоновый агент. Главное окно остаётся скрытым,
+             * пока Vue не будет готов показать экран настройки или полностью загруженное уведомление.
+             */
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
+            }
+
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(mqtt_supervisor(handle));
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
-			get_client_identity,
-			get_client_settings,
-			save_server_url,
-			enroll_client,
-			relay::start_relay_pairing,
-			relay::stop_relay_pairing,
-			get_notification,
-			acknowledge_notification
+            get_client_identity,
+            get_client_settings,
+            save_server_url,
+            enroll_client,
+            relay::start_relay_pairing,
+            relay::stop_relay_pairing,
+            get_notification,
+            acknowledge_notification,
+            get_pending_notification_ids,
+            dismiss_notification,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

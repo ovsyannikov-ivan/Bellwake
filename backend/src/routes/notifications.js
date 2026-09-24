@@ -1,5 +1,6 @@
 import { Router } from "express";
 import pool from "../database.js";
+import { mysqlDateTimeToUtcIso } from "../services/dateTime.js";
 
 const router = Router();
 
@@ -41,6 +42,9 @@ router.get("/:notificationId", async (req, res, next) => {
 
 		const notification = rows[0];
 		notification.ackRequired = Boolean(notification.ackRequired);
+		notification.startsAt = mysqlDateTimeToUtcIso(notification.startsAt);
+		notification.expiresAt = mysqlDateTimeToUtcIso(notification.expiresAt);
+		notification.createDatetime = mysqlDateTimeToUtcIso(notification.createDatetime);
 		res.json(notification);
 	} catch (error) {
 		next(error);

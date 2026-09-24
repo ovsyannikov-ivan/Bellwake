@@ -1,8 +1,8 @@
 import pool from "../database.js";
+import { mysqlDateTimeToUtcIso, utcIsoToMysqlDateTime } from "../services/dateTime.js";
 
 const SEVERITIES = new Set(["info", "warning", "critical"]);
 const STATES = new Set(["draft", "active", "archived"]);
-const DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
 
 class AdminSocketError extends Error {}
 
@@ -29,24 +29,11 @@ const getPositiveId = (value) => {
 };
 
 const normalizeDateTime = (value, label) => {
-	if (value === null || value === undefined || value === "") return null;
-	if (typeof value !== "string") throw new AdminSocketError(`${label}: укажите корректную дату и время`);
-
-	const match = DATETIME_RE.exec(value);
-	if (!match) throw new AdminSocketError(`${label}: укажите корректную дату и время`);
-
-	const [, year, month, day, hour, minute, second = "00"] = match;
-	const parts = [year, month, day, hour, minute, second].map(Number);
-	const [y, mo, d, h, mi, s] = parts;
-	const candidate = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
-	if (
-		candidate.getUTCFullYear() !== y || candidate.getUTCMonth() !== mo - 1 ||
-		candidate.getUTCDate() !== d || candidate.getUTCHours() !== h ||
-		candidate.getUTCMinutes() !== mi || candidate.getUTCSeconds() !== s
-	) {
+	try {
+		return utcIsoToMysqlDateTime(value);
+	} catch {
 		throw new AdminSocketError(`${label}: укажите существующую дату и время`);
 	}
-	return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 };
 
 const validateNotification = (payload) => {
@@ -77,9 +64,17 @@ const selectFields = `
 	severity,
 	ack_required AS ackRequired,
 	state,
-	DATE_FORMAT(starts_at, '%Y-%m-%dT%H:%i') AS startsAt,
-	DATE_FORMAT(expires_at, '%Y-%m-%dT%H:%i') AS expiresAt,
-	DATE_FORMAT(create_datetime, '%Y-%m-%dT%H:%i') AS createDatetime`;
+	starts_at AS startsAt,
+	expires_at AS expiresAt,
+	create_datetime AS createDatetime`;
+
+const serializeNotification = (notification) => ({
+	...notification,
+	ackRequired: Boolean(notification.ackRequired),
+	startsAt: mysqlDateTimeToUtcIso(notification.startsAt),
+	expiresAt: mysqlDateTimeToUtcIso(notification.expiresAt),
+	createDatetime: mysqlDateTimeToUtcIso(notification.createDatetime),
+});
 
 const getNotification = async (id) => {
 	const [rows] = await pool.execute(
@@ -87,7 +82,7 @@ const getNotification = async (id) => {
 		[id],
 	);
 	if (!rows[0]) throw new AdminSocketError("Уведомление не найдено");
-	return { ...rows[0], ackRequired: Boolean(rows[0].ackRequired) };
+	return serializeNotification(rows[0]);
 };
 
 const withAcknowledgement = (handler) => async (payload, ack) => {
@@ -129,7 +124,7 @@ export const registerAdminNotificationHandlers = (namespace, socket) => {
 			draw,
 			recordsTotal: Number(totalRow[0].count),
 			recordsFiltered: Number(filteredRow[0].count),
-			data: rows.map((row) => ({ ...row, ackRequired: Boolean(row.ackRequired) })),
+			data: rows.map(serializeNotification),
 		});
 	}));
 

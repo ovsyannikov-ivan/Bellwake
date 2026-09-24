@@ -19,10 +19,11 @@ const isSavingSetup = ref(false);
 const setupServerUrl = ref("");
 const setupEnrollmentToken = ref("");
 const setupError = ref("");
-const setupMode = ref("connecting"); // connecting | qr | manual | received
-const manualSetupReason = ref(null); // user | unavailable
+const setupMode = ref("connecting"); // connecting | qr | manual | received — внутренние состояния экрана настройки
+const manualSetupReason = ref(null); // user | unavailable — причина перехода к ручной настройке
 const relaySocketId = ref("");
 const relayListeners = [];
+const notificationListeners = [];
 
 const md = new MarkdownIt({
 	html: false,
@@ -31,12 +32,74 @@ const md = new MarkdownIt({
 	breaks: true,
 });
 
-const loadNotification = async () => {
-	notification.value = await invoke("get_notification", {
-		notificationId: 1,
-	});
+/*
+ * Rust управляет MQTT-соединением и очередью ожидающих ID даже тогда,
+ * когда это окно скрыто. Событие служит только сигналом пробуждения —
+ * актуальное состояние очереди всегда читаем из Rust.
+ */
+let queueSync = Promise.resolve();
 
-	console.log("Notification loaded:", notification.value);
+const synchronizeNotifications = async (refreshCurrent = false) => {
+	if (isSetup.value || isAcknowledging.value) return;
+
+	const pendingIds = await invoke("get_pending_notification_ids");
+	const currentId = notification.value?.id;
+
+	if (currentId && pendingIds.includes(currentId) && !refreshCurrent) return;
+
+	if (pendingIds.length === 0) {
+		notification.value = null;
+		await getCurrentWindow().hide();
+		return;
+	}
+
+	/*
+	 * Если приходит ещё одно уведомление, текущее остаётся на экране.
+	 * Текущий ID тоже запрашиваем повторно на случай, если администратор отредактировал уведомление.
+	 */
+	const notificationId = currentId && pendingIds.includes(currentId)
+		? currentId
+		: pendingIds[0];
+
+	try {
+		const loaded = await invoke("get_notification", { notificationId });
+
+		// Пока выполнялся HTTP-запрос, могло прийти пустое retained-сообщение об отмене уведомления.
+		const latestIds = await invoke("get_pending_notification_ids");
+		if (!latestIds.includes(notificationId)) {
+			void requestQueueSync();
+			return;
+		}
+
+		notification.value = loaded;
+		await nextTick();
+		if (document.fonts?.ready) await document.fonts.ready;
+		await resizeWindowToContent();
+
+		const window = getCurrentWindow();
+		const wasVisible = await window.isVisible();
+		if (!wasVisible) {
+			await window.show();
+			await window.setFocus();
+		}
+	} catch (error) {
+		console.error(`Unable to load Bellwake notification ${notificationId}:`, error);
+		/*
+		 * Оставляем ID в Rust, чтобы повторить загрузку после временной ошибки REST.
+		 * До этого момента старое или уже отменённое уведомление не показываем.
+		 */
+		if (!currentId || currentId !== notificationId) {
+			notification.value = null;
+			await getCurrentWindow().hide();
+		}
+	}
+};
+
+const requestQueueSync = (refreshCurrent = false) => {
+	queueSync = queueSync.catch((error) => {
+		console.error("Bellwake queue synchronization error:", error);
+	}).then(() => synchronizeNotifications(refreshCurrent));
+	return queueSync;
 };
 
 const renderedMessage = computed(() => {
@@ -59,11 +122,21 @@ const acknowledge = async () => {
 		console.log("Acknowledge result:", result);
 
 		if (result.acknowledged) {
-			await getCurrentWindow().close();
+			const notificationId = notification.value.id;
+
+			/*
+			 * Сначала скрываем окно. Если очистить состояние Vue, пока нативное окно ещё видно,
+			 * между уведомлениями на короткое время появляется пустое серое окно.
+			 */
+			await getCurrentWindow().hide();
+			notification.value = null;
+			await invoke("dismiss_notification", { notificationId });
 		}
 	} catch (error) {
 		console.error("Acknowledge error:", error);
+	} finally {
 		isAcknowledging.value = false;
+		await requestQueueSync();
 	}
 };
 
@@ -142,15 +215,8 @@ const saveSetup = async () => {
 
 		setupEnrollmentToken.value = "";
 		isSetup.value = false;
-
-		await loadNotification();
-		await nextTick();
-
-		if (document.fonts?.ready) {
-			await document.fonts.ready;
-		}
-
-		await resizeWindowToContent();
+		await getCurrentWindow().hide();
+		await requestQueueSync(); // Фоновый MQTT-обработчик запускается после сохранения настроек.
 	} catch (error) {
 		console.error("Bellwake setup error:", error);
 		setupError.value = String(error);
@@ -161,8 +227,19 @@ const saveSetup = async () => {
 
 onMounted(async () => {
 	const appWindow = getCurrentWindow();
+	await appWindow.hide();
 
 	try {
+		/*
+		 * Подписываемся на события ДО чтения очереди Rust:
+		 * retained-сообщения MQTT могут прийти сразу после установки соединения.
+		 */
+		notificationListeners.push(
+			await listen("bellwake-notification", () => {
+				void requestQueueSync(true);
+			}),
+		);
+
 		relayListeners.push(
 			await listen("bellwake-relay-connected", ({ payload }) => {
 				if (!isSetup.value || setupMode.value !== "connecting") return;
@@ -196,17 +273,9 @@ onMounted(async () => {
 				setupMode.value = "received";
 
 				try {
-					await loadNotification();
-
 					isSetup.value = false;
-
-					await nextTick();
-
-					if (document.fonts?.ready) {
-						await document.fonts.ready;
-					}
-
-					await resizeWindowToContent();
+					await getCurrentWindow().hide();
+					await requestQueueSync();
 				} catch (error) {
 					console.error("Bellwake initialization after automatic enrollment failed:", error);
 					setupError.value = "Настройка завершена, но не удалось запустить Bellwake";
@@ -234,26 +303,31 @@ onMounted(async () => {
 
 		if (!settings?.mqtt) {
 			isSetup.value = true;
+			await appWindow.show();
 			await startRelaySetup();
 		} else {
-			await loadNotification();
+			await requestQueueSync();
 		}
 
 		await nextTick();
-
-		if (document.fonts?.ready) {
-			await document.fonts.ready;
-		}
-
+		if (document.fonts?.ready) await document.fonts.ready;
 		await resizeWindowToContent();
 	} catch (error) {
 		console.error("Bellwake initialization error:", error);
-	} finally {
-		await appWindow.show();
 	}
 });
 
+let retryTimer;
+onMounted(() => {
+	// Если REST временно недоступен, не теряем ID, полученный через MQTT.
+	retryTimer = window.setInterval(() => {
+		if (!isSetup.value && !isAcknowledging.value) void requestQueueSync();
+	}, 15000);
+});
+
 onUnmounted(() => {
+	clearInterval(retryTimer);
+	for (const unlisten of notificationListeners) unlisten();
 	for (const unlisten of relayListeners) unlisten();
 	void invoke("stop_relay_pairing").catch(() => {});
 });
