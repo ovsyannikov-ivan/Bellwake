@@ -945,12 +945,34 @@ async fn get_notification(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_opener::init())
         .manage(relay::RelayState::default())
         .manage(MqttRuntime::default())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            #[cfg(not(debug_assertions))]
+            {
+                use tauri_plugin_autostart::ManagerExt;
+
+                let autostart = app.autolaunch();
+                match autostart.is_enabled() {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        if let Err(error) = autostart.enable() {
+                            eprintln!("Не удалось включить автозапуск Bellwake: {error}");
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("Не удалось проверить автозапуск Bellwake: {error}");
+                    }
+                }
+            }
 
             /*
              * Bellwake работает как фоновый агент. Главное окно остаётся скрытым,
