@@ -1,0 +1,8 @@
+{
+	"app": {
+		"trayIcon": {
+			"iconPath": "icons/BellwakeIconTemplate@2x.png",
+			"iconAsTemplate": true
+		}
+	}
+}
