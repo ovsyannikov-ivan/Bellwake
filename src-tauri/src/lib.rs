@@ -565,17 +565,14 @@ fn native_id_type() -> &'static str {
 
 #[cfg(target_os = "windows")]
 fn current_user_sid() -> Option<String> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
-    /*
-     * Временная простая реализация.
-     *
-     * whoami.exe входит в Windows.
-     * Позже при желании заменим на прямой WinAPI:
-     * OpenProcessToken -> GetTokenInformation(TokenUser).
-     */
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
     let output = Command::new("whoami")
         .args(["/user", "/fo", "csv", "/nh"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
 
@@ -586,11 +583,6 @@ fn current_user_sid() -> Option<String> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let line = stdout.trim();
 
-    /*
-     * Формат:
-     *
-     * "DOMAIN\username","S-1-5-21-..."
-     */
     line.rsplit(',')
         .next()
         .map(|value| value.trim().trim_matches('"').to_string())
