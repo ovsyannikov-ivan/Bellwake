@@ -4,19 +4,12 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const tauriBin = resolve(
-	projectDir,
-	"node_modules",
-	".bin",
-	process.platform === "win32" ? "tauri.cmd" : "tauri",
-);
+const tauriBin = resolve(projectDir, "node_modules", ".bin", process.platform === "win32" ? "tauri.cmd" : "tauri");
 const args = process.argv.slice(2);
 const environment = { ...process.env };
 
 const getEnvValue = (contents, key) => {
-	const line = contents
-		.split(/\r?\n/u)
-		.find((candidate) => candidate.startsWith(`${key}=`));
+	const line = contents.split(/\r?\n/u).find((candidate) => candidate.startsWith(`${key}=`));
 
 	if (!line) return "";
 
@@ -45,18 +38,7 @@ if (args[0] === "dev") {
 		 * утилита security сохраняет одну подпись. После однократного выбора
 		 * «Разрешать всегда» она передаёт токен процессу без новых запросов.
 		 */
-		const result = spawnSync(
-			"/usr/bin/security",
-			[
-				"find-generic-password",
-				"-s",
-				"com.bellwake.agent",
-				"-a",
-				"client-token",
-				"-w",
-			],
-			{ encoding: "utf8" },
-		);
+		const result = spawnSync("/usr/bin/security", ["find-generic-password", "-s", "com.bellwake.agent", "-a", "client-token", "-w"], { encoding: "utf8" });
 		const clientToken = result.status === 0 ? result.stdout.trim() : "";
 
 		if (clientToken) environment.BELLWAKE_CLIENT_TOKEN = clientToken;
@@ -67,6 +49,7 @@ const child = spawn(tauriBin, args, {
 	cwd: projectDir,
 	env: environment,
 	stdio: "inherit",
+	shell: process.platform === "win32",
 });
 
 child.once("error", (error) => {
