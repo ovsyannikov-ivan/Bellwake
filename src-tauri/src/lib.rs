@@ -949,11 +949,17 @@ pub fn run() {
         .manage(relay::RelayState::default())
         .manage(MqttRuntime::default())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             /*
              * Bellwake работает как фоновый агент. Главное окно остаётся скрытым,
              * пока Vue не будет готов показать экран настройки или полностью загруженное уведомление.
              */
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "windows")]
+                window.set_skip_taskbar(true)?;
+
                 let _ = window.hide();
             }
 
