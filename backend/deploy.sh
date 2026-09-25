@@ -22,6 +22,7 @@ SSH_TARGET="${DEPLOY_SSH_TARGET:-$(get_env "DEPLOY_SSH_TARGET" || true)}"
 SSH_PORT="${DEPLOY_SSH_PORT:-$(get_env "DEPLOY_SSH_PORT" || true)}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-$(get_env "DEPLOY_REMOTE_DIR" || true)}"
 PM2_APP="${DEPLOY_PM2_APP:-$(get_env "DEPLOY_PM2_APP" || true)}"
+SKIP_RESTART="${DEPLOY_SKIP_RESTART:-false}"
 
 [[ -n "${BELLWAKE_DOMAIN}" ]] || die "В .env отсутствует BELLWAKE_DOMAIN."
 
@@ -63,10 +64,23 @@ rsync -az --delete \
 
 echo
 echo "$(date '+%H:%M:%S') ✓ Файлы скопированы"
-echo "$(date '+%H:%M:%S') → Установка production-зависимостей и перезапуск PM2"
+echo "$(date '+%H:%M:%S') → Установка production-зависимостей"
 
 ssh -p "${SSH_PORT}" "${SSH_TARGET}" \
-	"${REMOTE_NODE_SETUP} && cd '${REMOTE_DIR}' && npm ci --omit=dev && pm2 restart '${PM2_APP}' --update-env && pm2 show '${PM2_APP}'"
+	"${REMOTE_NODE_SETUP} && cd '${REMOTE_DIR}' && npm ci --omit=dev"
+
+if [[ "${SKIP_RESTART}" == "true" ]]; then
+	echo
+	echo "$(date '+%H:%M:%S') ✓ Backend скопирован без перезапуска PM2"
+	echo "    После миграции перезапустите: pm2 restart '${PM2_APP}' --update-env"
+	exit 0
+fi
+
+echo
+echo "$(date '+%H:%M:%S') → Перезапуск PM2"
+
+ssh -p "${SSH_PORT}" "${SSH_TARGET}" \
+	"${REMOTE_NODE_SETUP} && pm2 restart '${PM2_APP}' --update-env && pm2 show '${PM2_APP}'"
 
 echo
 echo "$(date '+%H:%M:%S') ✓ Backend опубликован"

@@ -5,9 +5,11 @@ import helmet from "helmet";
 import mqtt from "mqtt";
 import { Server } from "socket.io";
 import pool from "./database.js";
+import { createAuthRouter } from "./routes/auth.js";
 import enrollmentRouter from "./routes/enrollment.js";
 import notificationsRouter from "./routes/notifications.js";
 import pairingRouter from "./routes/pairing.js";
+import { getAdminSessionByHash, getAdminSessionFromCookie, verifySocketCsrf } from "./services/adminAuth.js";
 import { registerAdminNotificationHandlers } from "./socket/adminNotifications.js";
 
 const app = express();
@@ -246,10 +248,66 @@ setInterval(() => {
 
 const adminNamespace = io.of("/admin");
 
+const expireAdminSocket = (socket, acknowledgement) => {
+	acknowledgement?.({ result: false, error: "Сессия администратора завершена" });
+	socket.emit("auth:expired");
+	socket.disconnect(true);
+};
+
+adminNamespace.use(async (socket, next) => {
+	try {
+		const session = await getAdminSessionFromCookie(socket.request.headers.cookie);
+		if (!session || !verifySocketCsrf(socket.handshake.auth?.csrfToken, session)) {
+			const error = new Error("Administrator session is required");
+			error.data = { code: "admin_unauthorized" };
+			return next(error);
+		}
+
+		socket.data.adminSession = session;
+		next();
+	} catch (error) {
+		next(error);
+	}
+});
+
 adminNamespace.on("connection", (socket) => {
-	// TODO: перед публикацией защитить пространство имён реальной сессией администратора.
+	const expiresInMs = Math.max(0, Number(socket.data.adminSession.expiresAtEpoch) * 1000 - Date.now());
+	const expirationTimer = setTimeout(() => expireAdminSocket(socket), expiresInMs);
+	const validationTimer = setInterval(async () => {
+		try {
+			if (!await getAdminSessionByHash(socket.data.adminSession.sessionHash)) expireAdminSocket(socket);
+		} catch (error) {
+			console.error("Admin Socket.IO session validation failed:", error);
+		}
+	}, 60_000);
+
+	socket.use(async (packet, next) => {
+		try {
+			const session = await getAdminSessionByHash(socket.data.adminSession.sessionHash);
+			if (!session) {
+				const acknowledgement = typeof packet.at(-1) === "function" ? packet.at(-1) : null;
+				expireAdminSocket(socket, acknowledgement);
+				return;
+			}
+			socket.data.adminSession = session;
+			next();
+		} catch (error) {
+			next(error);
+		}
+	});
+
+	socket.once("disconnect", () => {
+		clearTimeout(expirationTimer);
+		clearInterval(validationTimer);
+	});
 	registerAdminNotificationHandlers(adminNamespace, socket);
 });
+
+const disconnectAdminSession = (sessionHash) => {
+	for (const socket of adminNamespace.sockets.values()) {
+		if (socket.data.adminSession?.sessionHash === sessionHash) expireAdminSocket(socket);
+	}
+};
 
 app.disable("x-powered-by");
 app.set("trust proxy", "loopback");
@@ -257,6 +315,7 @@ app.set("trust proxy", "loopback");
 app.use(helmet());
 app.use(express.json({ limit: "256kb" }));
 
+app.use("/api/auth", createAuthRouter({ onSessionRevoked: disconnectAdminSession }));
 app.use("/api/enroll", enrollmentRouter);
 app.use("/api/notifications", notificationsRouter);
 app.use("/api/pairing", pairingRouter);

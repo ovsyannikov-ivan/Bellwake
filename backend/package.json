@@ -10,13 +10,15 @@
 		"setup": "npm run setup:env && npm run setup:broker && npm run setup:db",
 		"setup:env": "bash scripts/setup-env.sh",
 		"setup:broker": "sudo bash scripts/setup-mosquitto.sh",
-		"setup:db": "bash scripts/setup-db.sh"
+		"setup:db": "bash scripts/setup-db.sh",
+		"setup:admin": "node scripts/setup-admin.mjs"
 	},
 	"keywords": [],
 	"author": "Ivan Ovsyannikov",
 	"license": "MIT",
 	"type": "module",
 	"dependencies": {
+		"argon2": "^0.45.1",
 		"dotenv": "^17.4.2",
 		"express": "^5.2.1",
 		"helmet": "^8.3.0",

@@ -69,6 +69,64 @@ mysql \
 	--user="${DB_USER}" \
 	--database="${DB_NAME}" \
 	--default-character-set=utf8mb4 <<'SQL'
+CREATE TABLE IF NOT EXISTS `users` (
+  `user_id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT 'Уникальный идентификатор администратора Bellwake',
+  `username` varchar(100) NOT NULL COMMENT 'Уникальное имя пользователя администратора',
+  `password_hash` varchar(255) NOT NULL COMMENT 'Хеш пароля Argon2id с индивидуальной солью',
+  `display_name` varchar(255) NOT NULL COMMENT 'Отображаемое имя администратора',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'Разрешён ли вход администратора',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Дата создания учётной записи',
+  `last_login_at` datetime DEFAULT NULL COMMENT 'Дата последнего успешного входа',
+  PRIMARY KEY (`user_id`),
+  UNIQUE KEY `uq_users_username` (`username`),
+  KEY `idx_users_active` (`is_active`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Администраторы Bellwake Admin';
+
+CREATE TABLE IF NOT EXISTS `sessions` (
+  `session_id` char(64) NOT NULL COMMENT 'SHA-256 случайного идентификатора серверной сессии',
+  `user_id` bigint unsigned NOT NULL COMMENT 'Администратор, которому принадлежит сессия',
+  `csrf_token` char(64) NOT NULL COMMENT 'Случайный токен защиты от CSRF',
+  `ip_address` varchar(45) DEFAULT NULL COMMENT 'IP-адрес при создании сессии',
+  `user_agent` varchar(512) DEFAULT NULL COMMENT 'User-Agent при создании сессии',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Дата создания сессии',
+  `expires_at` datetime NOT NULL COMMENT 'Дата обязательного завершения сессии',
+  `revoked_at` datetime DEFAULT NULL COMMENT 'Дата ручного отзыва или выхода',
+  PRIMARY KEY (`session_id`),
+  KEY `idx_sessions_user` (`user_id`),
+  KEY `idx_sessions_expiration` (`expires_at`),
+  CONSTRAINT `fk_sessions_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Серверные сессии Bellwake Admin';
+
+CREATE TABLE IF NOT EXISTS `login_attempts` (
+  `attempt_id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT 'Идентификатор неуспешной попытки входа',
+  `username` varchar(100) NOT NULL COMMENT 'Введённое имя пользователя',
+  `ip_address` varchar(45) NOT NULL COMMENT 'IP-адрес запроса',
+  `attempted_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Дата неуспешной попытки входа',
+  PRIMARY KEY (`attempt_id`),
+  KEY `idx_login_attempts_limit` (`username`,`ip_address`,`attempted_at`),
+  KEY `idx_login_attempts_ip` (`ip_address`,`attempted_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Неуспешные попытки входа Bellwake Admin';
+
+CREATE TABLE IF NOT EXISTS `pairing_requests` (
+  `pairing_request_id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT 'Идентификатор подтверждённого QR-подключения',
+  `socket_id` char(36) NOT NULL COMMENT 'Временный UUID v4 сессии Cloudflare Relay',
+  `token_hash` char(64) NOT NULL COMMENT 'SHA-256 одноразового токена enrollment',
+  `approved_by_user_id` bigint unsigned NOT NULL COMMENT 'Администратор, подтвердивший QR-подключение',
+  `status` enum('pending','delivered','consumed','failed') NOT NULL DEFAULT 'pending' COMMENT 'Состояние QR-подключения',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Дата подтверждения QR-кода',
+  `expires_at` datetime NOT NULL COMMENT 'Дата истечения одноразового подтверждения',
+  `delivered_at` datetime DEFAULT NULL COMMENT 'Дата успешной передачи через Relay',
+  `used_at` datetime DEFAULT NULL COMMENT 'Дата успешного enrollment',
+  `enrolled_device_id` char(64) DEFAULT NULL COMMENT 'Устройство, завершившее enrollment',
+  `enrolled_user_key` char(64) DEFAULT NULL COMMENT 'Пользователь устройства, завершивший enrollment',
+  PRIMARY KEY (`pairing_request_id`),
+  UNIQUE KEY `uq_pairing_requests_socket` (`socket_id`),
+  UNIQUE KEY `uq_pairing_requests_token` (`token_hash`),
+  KEY `idx_pairing_requests_admin` (`approved_by_user_id`),
+  KEY `idx_pairing_requests_expiration` (`expires_at`),
+  CONSTRAINT `fk_pairing_requests_user` FOREIGN KEY (`approved_by_user_id`) REFERENCES `users` (`user_id`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Краткоживущие подтверждения QR-подключений Bellwake';
+
 CREATE TABLE IF NOT EXISTS `notifications` (
   `notification_id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT 'Уникальный идентификатор уведомления',
   `title` varchar(255) NOT NULL COMMENT 'Заголовок уведомления',
@@ -110,12 +168,15 @@ CREATE TABLE IF NOT EXISTS `device_users` (
   `last_seen` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Дата и время последнего обнаружения пользователя на устройстве',
   `client_token_hash` char(64) DEFAULT NULL COMMENT 'SHA-256 токена для повторной аутентификации Bellwake Agent',
   `last_enroll_at` datetime DEFAULT NULL COMMENT 'Последнее успешное обновление конфигурации агента',
+  `enrolled_by_user_id` bigint unsigned DEFAULT NULL COMMENT 'Администратор последнего явного QR-подключения',
   PRIMARY KEY (`relation_id`),
   UNIQUE KEY `uq_device_user` (`device_id`,`user_key`),
   KEY `idx_device_users_username` (`username`),
   KEY `idx_device_users_sid` (`sid`),
   KEY `idx_device_users_last_seen` (`last_seen`),
-  CONSTRAINT `fk_device_users_device` FOREIGN KEY (`device_id`) REFERENCES `devices` (`device_id`) ON DELETE CASCADE
+  KEY `idx_device_users_enrolled_by` (`enrolled_by_user_id`),
+  CONSTRAINT `fk_device_users_device` FOREIGN KEY (`device_id`) REFERENCES `devices` (`device_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_device_users_enrolled_by` FOREIGN KEY (`enrolled_by_user_id`) REFERENCES `users` (`user_id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Учётные записи пользователей, обнаруженные на устройствах Bellwake';
 
 CREATE TABLE IF NOT EXISTS `notification_ack` (
@@ -130,7 +191,55 @@ CREATE TABLE IF NOT EXISTS `notification_ack` (
   CONSTRAINT `fk_notification_ack_device` FOREIGN KEY (`device_id`) REFERENCES `devices` (`device_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_notification_ack_notification` FOREIGN KEY (`notification_id`) REFERENCES `notifications` (`notification_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Подтверждения получения и прочтения уведомлений Bellwake';
+
+SET @column_exists = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'device_users'
+    AND COLUMN_NAME = 'enrolled_by_user_id'
+);
+SET @migration_sql = IF(
+  @column_exists = 0,
+  'ALTER TABLE `device_users` ADD COLUMN `enrolled_by_user_id` bigint unsigned DEFAULT NULL COMMENT ''Администратор последнего явного QR-подключения'' AFTER `last_enroll_at`',
+  'SELECT 1'
+);
+PREPARE migration_statement FROM @migration_sql;
+EXECUTE migration_statement;
+DEALLOCATE PREPARE migration_statement;
+
+SET @index_exists = (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'device_users'
+    AND INDEX_NAME = 'idx_device_users_enrolled_by'
+);
+SET @migration_sql = IF(
+  @index_exists = 0,
+  'ALTER TABLE `device_users` ADD INDEX `idx_device_users_enrolled_by` (`enrolled_by_user_id`)',
+  'SELECT 1'
+);
+PREPARE migration_statement FROM @migration_sql;
+EXECUTE migration_statement;
+DEALLOCATE PREPARE migration_statement;
+
+SET @constraint_exists = (
+  SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'device_users'
+    AND CONSTRAINT_NAME = 'fk_device_users_enrolled_by'
+    AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+);
+SET @migration_sql = IF(
+  @constraint_exists = 0,
+  'ALTER TABLE `device_users` ADD CONSTRAINT `fk_device_users_enrolled_by` FOREIGN KEY (`enrolled_by_user_id`) REFERENCES `users` (`user_id`) ON DELETE SET NULL',
+  'SELECT 1'
+);
+PREPARE migration_statement FROM @migration_sql;
+EXECUTE migration_statement;
+DEALLOCATE PREPARE migration_statement;
 SQL
 
 echo
-echo "✓ Таблицы Bellwake готовы. Существующие таблицы и данные не изменялись."
+echo "✓ Таблицы и миграции Bellwake применены без удаления существующих данных."
+
+node "${ROOT_DIR}/scripts/setup-admin.mjs"

@@ -3,6 +3,11 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { Modal } from "bootstrap";
 import QrScanner from "qr-scanner";
 
+const props = defineProps({
+	csrfToken: { type: String, required: true },
+});
+const emit = defineEmits(["unauthorized"]);
+
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const modalElement = ref(null);
@@ -149,6 +154,8 @@ const getApprovalErrorMessage = (status, payload) => {
 			return "Cloudflare Relay не ответил вовремя. Повторите попытку.";
 		case "relay_delivery_failed":
 			return "Не удалось передать настройки устройству. QR-код мог устареть или Cloudflare Relay сейчас недоступен.";
+		case "pairing_already_approved":
+			return "Этот QR-код уже подтверждён. Дождитесь завершения регистрации устройства.";
 		default:
 			return status >= 500
 				? "Сервер временно не может подключить устройство. Повторите попытку позже."
@@ -167,13 +174,20 @@ const approve = async () => {
 	try {
 		const response = await fetch("/api/pairing/approve", {
 			method: "POST",
+			credentials: "same-origin",
 			headers: {
 				"Content-Type": "application/json",
+				"X-Bellwake-Request": "admin",
+				"X-CSRF-Token": props.csrfToken,
 			},
 			body: JSON.stringify({ socketId: recognizedSocketId.value }),
 			signal: requestController.signal,
 		});
 		const payload = await response.json().catch(() => ({}));
+		if (response.status === 401) {
+			emit("unauthorized");
+			return;
+		}
 
 		if (!response.ok) {
 			throw new Error(getApprovalErrorMessage(response.status, payload));

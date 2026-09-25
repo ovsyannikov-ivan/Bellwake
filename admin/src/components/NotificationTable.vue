@@ -7,7 +7,7 @@ import { socketErrorHandlerKey } from "../plugins/plugin.socketErrorHandler.js";
 import { debounce, socketEmitAsync } from "../services/service.helpers.js";
 import { formatUtcIsoInBrowserTimeZone } from "../services/service.datetime.js";
 
-const emit = defineEmits(["create", "edit", "changed"]);
+const emit = defineEmits(["create", "pair", "edit", "changed"]);
 const { socket } = inject(socketServiceKey);
 const handleSocketError = inject(socketErrorHandlerKey);
 const tableElement = ref(null);
@@ -131,7 +131,10 @@ defineExpose({ reload });
 <template>
 	<div class="table-card-header pb-3">
 		<h1 class="h5 mb-0">Уведомления</h1>
-		<button type="button" class="btn btn-primary" @click="emit('create')"><i class="bi bi-plus-lg me-2" />Создать уведомление</button>
+		<div class="table-card-actions">
+			<button type="button" class="btn btn-violet" @click="emit('pair')"><i class="bi bi-qr-code-scan me-2" />Подключить устройство</button>
+			<button type="button" class="btn btn-primary" @click="emit('create')"><i class="bi bi-plus-lg me-2" />Создать уведомление</button>
+		</div>
 	</div>
 	<div class="table-responsive-shell">
 		<table ref="tableElement" class="table small table-hover align-middle w-100 mb-0">

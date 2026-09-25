@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { Router } from "express";
 import pool from "../database.js";
+import { requireAdminSession } from "../services/adminAuth.js";
 import { mysqlDateTimeToUtcIso } from "../services/dateTime.js";
 
 const router = Router();
@@ -191,7 +192,7 @@ router.post("/:notificationId/acknowledge", authenticateAgent, async (req, res, 
 	}
 });
 
-router.get("/:notificationId", async (req, res, next) => {
+router.get("/:notificationId", requireAdminSession, async (req, res, next) => {
 	try {
 		const notificationId = getNotificationId(req.params.notificationId);
 
