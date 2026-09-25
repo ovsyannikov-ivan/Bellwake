@@ -1,13 +1,16 @@
 {
 	"name": "Bellwake",
+	"private": true,
 	"version": "1.0.0",
-	"description": "",
+	"description": "Сервер уведомлений Bellwake",
 	"main": "index.js",
 	"scripts": {
 		"start": "node src/app.js",
 		"dev": "node --watch src/app.js",
+		"setup": "npm run setup:env && npm run setup:broker && npm run setup:db",
 		"setup:env": "bash scripts/setup-env.sh",
-		"setup:broker": "sudo bash scripts/setup-mosquitto.sh"
+		"setup:broker": "sudo bash scripts/setup-mosquitto.sh",
+		"setup:db": "bash scripts/setup-db.sh"
 	},
 	"keywords": [],
 	"author": "Ivan Ovsyannikov",

@@ -17,6 +17,11 @@ src-tauri/target/
 dist/
 dist-ssr/
 admin/dist/
+coverage/
+*.lcov
+
+# Rust
+**/*.rs.bk
 
 *.local
 
@@ -25,6 +30,7 @@ admin/dist/
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
@@ -39,3 +45,12 @@ admin/dist/
 # Cloudflare local secrets
 .dev.vars
 .dev.vars.*
+.wrangler/
+
+# Certificates and database dumps
+*.pem
+*.key
+*.p12
+*.pfx
+*.sql
+*.sql.gz

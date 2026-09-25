@@ -58,6 +58,18 @@ set_env() {
 	fi
 
 	chmod --reference="${ENV_FILE}" "${tmp}" 2>/dev/null || chmod 0600 "${tmp}"
+
+	# При запуске через sudo сохраняем владельца исходного .env.
+	if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+		local owner
+
+		if owner="$(stat -c '%u:%g' "${ENV_FILE}" 2>/dev/null)"; then
+			chown "${owner}" "${tmp}"
+		elif owner="$(stat -f '%u:%g' "${ENV_FILE}" 2>/dev/null)"; then
+			chown "${owner}" "${tmp}"
+		fi
+	fi
+
 	mv "${tmp}" "${ENV_FILE}"
 }
 

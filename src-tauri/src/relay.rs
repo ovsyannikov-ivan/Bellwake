@@ -301,16 +301,16 @@ async fn relay_session(app: &AppHandle) -> Result<(), String> {
 					}
 
 					/*
-					 * Reuse the existing manual enrollment flow:
+					 * Используем существующий поток ручной регистрации:
 					 *
-					 * 1. save the Bellwake server URL;
-					 * 2. call /api/enroll with enrollmentToken;
-					 * 3. enroll_client stores clientToken and MQTT
-					 *    password in the system credential store;
-					 * 4. enroll_client stores only non-secret MQTT
-					 *    settings in settings.json.
+					 * 1. сохраняем адрес сервера Bellwake;
+					 * 2. вызываем /api/enroll с enrollmentToken;
+					 * 3. enroll_client сохраняет clientToken и пароль MQTT
+					 *    в системном хранилище учётных данных;
+					 * 4. enroll_client сохраняет в settings.json только
+					 *    несекретные параметры MQTT.
 					 *
-					 * enrollmentToken itself is never persisted.
+					 * Сам enrollmentToken нигде не сохраняется.
 					 */
 
 					if let Err(error) = save_server_url(

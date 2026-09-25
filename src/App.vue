@@ -46,10 +46,13 @@ const synchronizeNotifications = async (refreshCurrent = false) => {
 	const currentId = notification.value?.id;
 
 	if (currentId && pendingIds.includes(currentId) && !refreshCurrent) return;
+	if (currentId && notification.value.ackRequired && !pendingIds.includes(currentId)) return;
 
 	if (pendingIds.length === 0) {
 		notification.value = null;
-		await getCurrentWindow().hide();
+		const window = getCurrentWindow();
+		await window.setAlwaysOnTop(false);
+		await window.hide();
 		return;
 	}
 
@@ -63,6 +66,10 @@ const synchronizeNotifications = async (refreshCurrent = false) => {
 
 	try {
 		const loaded = await invoke("get_notification", { notificationId });
+		if (!loaded) {
+			await invoke("dismiss_notification", { notificationId });
+			return;
+		}
 
 		// Пока выполнялся HTTP-запрос, могло прийти пустое retained-сообщение об отмене уведомления.
 		const latestIds = await invoke("get_pending_notification_ids");
@@ -77,6 +84,7 @@ const synchronizeNotifications = async (refreshCurrent = false) => {
 		await resizeWindowToContent();
 
 		const window = getCurrentWindow();
+		await window.setAlwaysOnTop(true);
 		const wasVisible = await window.isVisible();
 		if (!wasVisible) {
 			await window.show();
@@ -90,7 +98,9 @@ const synchronizeNotifications = async (refreshCurrent = false) => {
 		 */
 		if (!currentId || currentId !== notificationId) {
 			notification.value = null;
-			await getCurrentWindow().hide();
+			const window = getCurrentWindow();
+			await window.setAlwaysOnTop(false);
+			await window.hide();
 		}
 	}
 };
@@ -123,12 +133,14 @@ const acknowledge = async () => {
 
 		if (result.acknowledged) {
 			const notificationId = notification.value.id;
+			const window = getCurrentWindow();
 
 			/*
 			 * Сначала скрываем окно. Если очистить состояние Vue, пока нативное окно ещё видно,
 			 * между уведомлениями на короткое время появляется пустое серое окно.
 			 */
-			await getCurrentWindow().hide();
+			await window.setAlwaysOnTop(false);
+			await window.hide();
 			notification.value = null;
 			await invoke("dismiss_notification", { notificationId });
 		}

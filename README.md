@@ -1,7 +1,201 @@
-# Tauri + Vue 3
+# Bellwake
 
-This template should help get you started developing with Tauri + Vue 3 in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Bellwake — система доставки обязательных уведомлений на рабочие станции. Администратор создаёт уведомление в веб-интерфейсе, сервер публикует его в MQTT в заданное время, а настольный агент показывает окно поверх остальных приложений и при необходимости требует подтверждение прочтения.
 
-## Recommended IDE Setup
+Проект состоит из трёх частей:
 
-- [VS Code](https://code.visualstudio.com/) + [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- `admin/` — веб-интерфейс администратора на Vue 3 и Bootstrap 5;
+- `backend/` — API, Socket.IO, планирование уведомлений, MQTT и работа с MySQL;
+- `src/` и `src-tauri/` — настольный агент Tauri для macOS и Windows.
+
+## Как устроена доставка
+
+1. Администратор создаёт или изменяет уведомление через Bellwake Admin.
+2. Сервер хранит даты в UTC и регулярно сверяет активные уведомления с MySQL.
+3. Когда наступает `starts_at`, сервер публикует retained-сообщение в `bellwake/notifications/<notification_id>`.
+4. Агент получает идентификатор, загружает содержимое через API и показывает окно.
+5. Для обязательного уведомления подтверждение записывается в `notification_ack`. Повторно этому сочетанию устройства и пользователя уведомление не показывается.
+6. После `expires_at`, перевода в неактивное состояние или удаления сервер снимает retained-сообщение.
+
+MQTT не содержит текст уведомления — только его идентификатор. Содержимое и право показа агент получает от API организации.
+
+## Конфигурация организаций
+
+Единственный источник настроек конкретной организации — `backend/.env`. Этот файл создаётся из `backend/.env.example`, не входит в Git и не должен попадать в сборки или публикации.
+
+В исходном коде не зафиксирован домен организации. `BELLWAKE_DOMAIN`, параметры MySQL, MQTT и развёртывания читаются из `.env`. Веб-интерфейс обращается к `/api` на своём домене, а агент получает адрес сервера организации при первоначальной регистрации.
+
+Исключение — единый официальный Cloudflare Relay:
+
+`bellwake-relay.ovsyannikov-ivan.workers.dev`
+
+Его адрес намеренно встроен в сервер и агент. Relay используется только для первоначальной привязки, обслуживает все организации и не хранит их конфигурацию. `RELAY_SEND_TOKEN` в `.env.example` также общий для официального Relay: его не нужно генерировать или менять при обычной установке. Замена токена требует собственного Cloudflare Worker, синхронной замены его секрета и пересборки клиента с новым адресом Relay.
+
+## Требования
+
+Для сервера:
+
+- Debian или Ubuntu;
+- Node.js и npm;
+- MySQL 8 с заранее созданными пустой базой и пользователем;
+- TLS-сертификат домена, по умолчанию от Let's Encrypt;
+- права `sudo` для установки и настройки Mosquitto;
+- PM2 для постоянного запуска backend.
+
+Для сборки агента дополнительно нужны Rust и системные зависимости Tauri 2. Сборка Windows выполняется на Windows, сборка macOS — на macOS.
+
+## Первоначальная настройка сервера
+
+Установите зависимости backend:
+
+```bash
+cd backend
+npm ci
+```
+
+Запустите общую настройку:
+
+```bash
+npm run setup
+```
+
+Команда последовательно выполняет:
+
+- `npm run setup:env` — создаёт или дополняет `.env`, запрашивает домен и параметры MySQL, генерирует секрет организации;
+- `npm run setup:broker` — устанавливает и настраивает Mosquitto, TLS, пользователей и ACL;
+- `npm run setup:db` — создаёт отсутствующие таблицы Bellwake через `CREATE TABLE IF NOT EXISTS`.
+
+`setup:db` не создаёт саму базу или пользователя MySQL, не удаляет таблицы, не очищает и не изменяет существующие данные. Его можно запускать повторно.
+
+Сценарий настройки брокера ожидает TLS-файлы:
+
+```text
+/etc/letsencrypt/live/<BELLWAKE_DOMAIN>/fullchain.pem
+/etc/letsencrypt/live/<BELLWAKE_DOMAIN>/privkey.pem
+```
+
+При других путях добавьте `MQTT_CERT_FILE` и `MQTT_KEY_FILE` в `backend/.env` до запуска `setup:broker`.
+
+## Запуск backend
+
+Для разработки:
+
+```bash
+cd backend
+npm run dev
+```
+
+Для постоянного запуска через PM2:
+
+```bash
+cd backend
+pm2 start ecosystem.config.cjs
+pm2 save
+```
+
+Проверка состояния доступна по `GET /api/health`.
+
+### Публикация backend
+
+В `backend/.env` можно задать:
+
+```dotenv
+DEPLOY_SSH_TARGET=user@example.org
+DEPLOY_SSH_PORT=22
+DEPLOY_REMOTE_DIR=/var/www/example.org/backend
+DEPLOY_PM2_APP=bellwake-api
+```
+
+После этого:
+
+```bash
+cd backend
+./deploy.sh
+```
+
+Сценарий копирует исходники без `.env` и `node_modules`, выполняет на сервере `npm ci --omit=dev` и перезапускает указанное приложение PM2. Серверный `.env` сохраняется.
+
+## Bellwake Admin
+
+Для разработки сначала запустите backend, затем:
+
+```bash
+cd admin
+npm ci
+npm run dev
+```
+
+Интерфейс откроется на `http://127.0.0.1:5173`; Vite проксирует `/api` и WebSocket на `http://127.0.0.1:3102`.
+
+Сборка:
+
+```bash
+cd admin
+npm run build
+```
+
+Содержимое `admin/dist/` публикуется в корень сайта организации. В рабочей среде обратный прокси должен направлять `/api` на backend и поддерживать переключение протокола WebSocket для `/api/socket.io`.
+
+> Пространство Socket.IO `/admin` пока не защищено административной сессией. До открытия интерфейса в публичный интернет ограничьте к нему доступ на уровне обратного прокси или добавьте полноценную аутентификацию.
+
+## Настольный агент
+
+Установка зависимостей:
+
+```bash
+npm ci
+```
+
+Запуск для разработки:
+
+```bash
+npm run tauri -- dev
+```
+
+Кроссплатформенная обёртка запускает Tauri и в macOS, и в Windows. На macOS она повторно использует сохранённые в Keychain учётные данные, чтобы отладочная пересборка не запрашивала доступ при каждом запуске.
+
+Сборка установочного пакета:
+
+```bash
+npm run tauri -- build
+```
+
+Артефакты появляются в `src-tauri/target/release/bundle/`. На macOS создаются `.app` и `.dmg`; на Windows — установщики, поддерживаемые Tauri.
+
+Новый агент связывается с организацией через QR-код и единый официальный Relay. После регистрации адрес API и несекретные параметры MQTT сохраняются в `settings.json`, а `clientToken` и пароль MQTT — в системном хранилище учётных данных. `enrollmentToken` на клиенте не сохраняется.
+
+## База данных и время
+
+Bellwake использует таблицы:
+
+- `notifications` — уведомления и период действия;
+- `devices` — зарегистрированные устройства;
+- `device_users` — пользователи устройств и токены повторной регистрации;
+- `notification_ack` — подтверждения обязательных уведомлений.
+
+API передаёт даты в UTC ISO 8601. Backend преобразует их в MySQL `DATETIME` UTC через Luxon. Веб-интерфейс показывает локальное время браузера и также использует Luxon для преобразования в UTC и обратно.
+
+## Проверка изменений
+
+```bash
+npm run build
+cargo check --manifest-path src-tauri/Cargo.toml
+
+cd admin
+npm run build
+
+cd ../backend
+node --check src/app.js
+bash -n deploy.sh scripts/*.sh scripts/lib/*.sh
+```
+
+## Безопасность репозитория
+
+- Не добавляйте `backend/.env`, закрытые ключи TLS, дампы базы и локальные настройки в Git.
+- `ENROLLMENT_TOKEN`, пароли MySQL и MQTT уникальны для организации и создаются или вводятся при настройке.
+- Общий `RELAY_SEND_TOKEN` в `.env.example` относится только к единому официальному Relay и не заменяет секреты организации.
+- Перед публикацией проверяйте `git status` и содержимое подготовленного commit.
+
+## Лицензия
+
+Проект распространяется по лицензии MIT. См. `LICENSE`.

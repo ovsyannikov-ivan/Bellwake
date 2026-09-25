@@ -1,27 +1,55 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -Eeuo pipefail
 
-PROJECT="$HOME/Documents/Bellwake/backend"
-SOURCE="$PROJECT/"
+PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${PROJECT}/.env"
+ENV_LIB="${PROJECT}/scripts/lib/env.sh"
 
-SSH_TARGET="remote@89.223.81.244"
-REMOTE_DIR="/var/www/bellwake.oncocentre.ru/backend"
-DEST="$SSH_TARGET:$REMOTE_DIR/"
-SSH_PORT=58080
-PM2_APP="bellwake-api"
+die() {
+	echo
+	echo "Ошибка: $*" >&2
+	exit 1
+}
+
+[[ -f "${ENV_FILE}" ]] || die "${ENV_FILE} не найден. Сначала выполните npm run setup:env."
+[[ -f "${ENV_LIB}" ]] || die "${ENV_LIB} не найден."
+
+source "${ENV_LIB}"
+
+BELLWAKE_DOMAIN="$(get_env "BELLWAKE_DOMAIN" || true)"
+SSH_TARGET="${DEPLOY_SSH_TARGET:-$(get_env "DEPLOY_SSH_TARGET" || true)}"
+SSH_PORT="${DEPLOY_SSH_PORT:-$(get_env "DEPLOY_SSH_PORT" || true)}"
+REMOTE_DIR="${DEPLOY_REMOTE_DIR:-$(get_env "DEPLOY_REMOTE_DIR" || true)}"
+PM2_APP="${DEPLOY_PM2_APP:-$(get_env "DEPLOY_PM2_APP" || true)}"
+
+[[ -n "${BELLWAKE_DOMAIN}" ]] || die "В .env отсутствует BELLWAKE_DOMAIN."
+
+SSH_PORT="${SSH_PORT:-22}"
+REMOTE_DIR="${REMOTE_DIR:-/var/www/${BELLWAKE_DOMAIN}/backend}"
+PM2_APP="${PM2_APP:-bellwake-api}"
+
+[[ -n "${SSH_TARGET}" ]] || die "Укажите DEPLOY_SSH_TARGET в .env или окружении."
+
+if [[ ! "${SSH_PORT}" =~ ^[0-9]+$ ]] || (( SSH_PORT < 1 || SSH_PORT > 65535 )); then
+	die "DEPLOY_SSH_PORT должен быть числом от 1 до 65535."
+fi
+
+DEST="${SSH_TARGET}:${REMOTE_DIR}/"
 REMOTE_NODE_SETUP='export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"'
 
 echo
-echo "$(date '+%H:%M:%S') → Bellwake Backend deploy"
+echo "$(date '+%H:%M:%S') → Сборка и публикация Bellwake Backend"
+echo "    Сервер: ${SSH_TARGET}:${SSH_PORT}"
+echo "    Каталог: ${REMOTE_DIR}"
 
-cd "$PROJECT"
+cd "${PROJECT}"
 
 echo
-echo "$(date '+%H:%M:%S') → uploading backend"
+echo "$(date '+%H:%M:%S') → Копирование backend"
 
 rsync -az --delete \
-	-e "ssh -p $SSH_PORT" \
+	-e "ssh -p ${SSH_PORT}" \
 	--no-owner \
 	--no-group \
 	--chmod='Dg+s,Dg+w,Fg+w' \
@@ -30,16 +58,15 @@ rsync -az --delete \
 	--exclude 'node_modules/' \
 	--exclude 'npm-debug.log*' \
 	--exclude 'coverage/' \
-	"$SOURCE" \
-	"$DEST"
+	"${PROJECT}/" \
+	"${DEST}"
 
 echo
-echo "$(date '+%H:%M:%S') ✓ upload complete"
-echo "$(date '+%H:%M:%S') → installing production dependencies"
+echo "$(date '+%H:%M:%S') ✓ Файлы скопированы"
+echo "$(date '+%H:%M:%S') → Установка production-зависимостей и перезапуск PM2"
 
-ssh -p "$SSH_PORT" "$SSH_TARGET" \
-	"$REMOTE_NODE_SETUP && cd '$REMOTE_DIR' && npm ci --omit=dev && pm2 restart '$PM2_APP' --update-env && pm2 show '$PM2_APP'"
+ssh -p "${SSH_PORT}" "${SSH_TARGET}" \
+	"${REMOTE_NODE_SETUP} && cd '${REMOTE_DIR}' && npm ci --omit=dev && pm2 restart '${PM2_APP}' --update-env && pm2 show '${PM2_APP}'"
 
 echo
-echo "$(date '+%H:%M:%S') ✓ dependencies installed"
-echo "$(date '+%H:%M:%S') ✓ deploy complete"
+echo "$(date '+%H:%M:%S') ✓ Backend опубликован"

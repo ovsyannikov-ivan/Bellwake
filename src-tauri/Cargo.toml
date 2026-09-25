@@ -1,16 +1,16 @@
 [package]
 name = "Bellwake"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Агент доставки уведомлений Bellwake"
+authors = ["Ivan Ovsyannikov"]
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# Описание полей: https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+# Суффикс `_lib` сохраняет уникальность имени библиотеки и не даёт ему
+# пересечься с именем исполняемого файла. Это особенно важно в Windows:
+# https://github.com/rust-lang/cargo/issues/8519
 name = "bellwake_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -33,7 +33,7 @@ tokio = { version = "1.53.1", features = ["time"] }
 rumqttc = "0.25.1"
 
 
-# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+# Рекомендации по оптимизации размера: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1
 lto = true

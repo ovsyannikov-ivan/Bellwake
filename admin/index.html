@@ -17,7 +17,7 @@
 					const storedMode = localStorage.getItem(storageKey);
 					if (allowedModes.includes(storedMode)) mode = storedMode;
 				} catch {
-					// The system theme remains the safe default when storage is unavailable.
+					// Если хранилище недоступно, оставляем безопасную системную тему.
 				}
 
 				const resolvedTheme = mode === "auto"

@@ -1,7 +1,10 @@
 use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 use std::time::Duration;
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS, Transport};
 use tauri::{Emitter, Manager};
@@ -43,6 +46,13 @@ struct AcknowledgeResult {
     client: ClientIdentity,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AcknowledgeApiResponse {
+    notification_id: u64,
+    acknowledged: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MqttSettings {
@@ -75,6 +85,8 @@ struct NotificationQueue {
 #[derive(Default)]
 struct MqttRuntime {
     queue: Mutex<NotificationQueue>,
+    configuration_revision: AtomicU64,
+    client_token: Mutex<Option<String>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -94,6 +106,12 @@ fn emit_queue_changed(app: &tauri::AppHandle) {
     if let Err(error) = app.emit("bellwake-notification", ()) {
         eprintln!("Unable to emit Bellwake queue event: {error}");
     }
+}
+
+fn notify_mqtt_configuration_changed(app: &tauri::AppHandle) {
+    app.state::<MqttRuntime>()
+        .configuration_revision
+        .fetch_add(1, Ordering::Release);
 }
 
 fn clear_pending(app: &tauri::AppHandle, clear_acknowledgements: bool) {
@@ -116,6 +134,9 @@ fn clear_pending(app: &tauri::AppHandle, clear_acknowledgements: bool) {
 }
 
 fn upsert_notification(app: &tauri::AppHandle, id: u64) {
+    #[cfg(debug_assertions)]
+    println!("Bellwake MQTT notification queued: {id}");
+
     let runtime = app.state::<MqttRuntime>();
     let should_emit = match runtime.queue.lock() {
         Ok(mut queue) => {
@@ -243,11 +264,22 @@ async fn mqtt_connection(app: tauri::AppHandle, mqtt: MqttSettings, password: St
  */
 async fn mqtt_supervisor(app: tauri::AppHandle) {
     let mut running: Option<(MqttSettings, String, tauri::async_runtime::JoinHandle<()>)> = None;
+    let mut applied_revision = None;
 
     loop {
+        let revision = app
+            .state::<MqttRuntime>()
+            .configuration_revision
+            .load(Ordering::Acquire);
+
+        if applied_revision == Some(revision) {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            continue;
+        }
+
         let desired = match load_client_settings_internal(&app) {
             Ok(Some(settings)) => match settings.mqtt {
-                Some(mqtt) => match load_secret(KEYRING_MQTT_PASSWORD) {
+                Some(mqtt) => match load_mqtt_password() {
                     Ok(Some(password)) => Some((mqtt, password)),
                     Ok(None) => None,
                     Err(error) => {
@@ -263,6 +295,8 @@ async fn mqtt_supervisor(app: tauri::AppHandle) {
                 None
             }
         };
+
+        applied_revision = Some(revision);
 
         let changed = match (&running, &desired) {
             (None, None) => false,
@@ -312,6 +346,61 @@ fn load_secret(name: &str) -> Result<Option<String>, String> {
 			"Unable to read {name} from system credential store: {error}"
 		)),
 	}
+}
+
+fn load_mqtt_password() -> Result<Option<String>, String> {
+    #[cfg(debug_assertions)]
+    if let Ok(password) = std::env::var("BELLWAKE_MQTT_PASSWORD") {
+        if !password.is_empty() {
+            return Ok(Some(password));
+        }
+    }
+
+    load_secret(KEYRING_MQTT_PASSWORD)
+}
+
+fn load_client_token(app: &tauri::AppHandle) -> Result<Option<String>, String> {
+    let runtime = app.state::<MqttRuntime>();
+
+    if let Some(token) = runtime
+        .client_token
+        .lock()
+        .map_err(|_| "Client token cache lock poisoned".to_string())?
+        .clone()
+    {
+        return Ok(Some(token));
+    }
+
+    #[cfg(debug_assertions)]
+    let token = match std::env::var("BELLWAKE_CLIENT_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+    {
+        Some(token) => Some(token),
+        None => load_secret(KEYRING_CLIENT_TOKEN)?,
+    };
+
+    #[cfg(not(debug_assertions))]
+    let token = load_secret(KEYRING_CLIENT_TOKEN)?;
+
+    if let Some(token) = token.as_ref() {
+        *runtime
+            .client_token
+            .lock()
+            .map_err(|_| "Client token cache lock poisoned".to_string())? = Some(token.clone());
+    }
+
+    Ok(token)
+}
+
+fn cache_client_token(app: &tauri::AppHandle, token: &str) -> Result<(), String> {
+    *app
+        .state::<MqttRuntime>()
+        .client_token
+        .lock()
+        .map_err(|_| "Client token cache lock poisoned".to_string())? = Some(token.to_string());
+
+    Ok(())
 }
 
 fn save_secret_if_changed(
@@ -552,10 +641,47 @@ fn get_client_identity() -> Result<ClientIdentity, String> {
 }
 
 #[tauri::command]
-fn acknowledge_notification(
+async fn acknowledge_notification(
+    app: tauri::AppHandle,
     notification_id: u64,
 ) -> Result<AcknowledgeResult, String> {
+    let settings = load_client_settings_internal(&app)?
+        .ok_or_else(|| "Bellwake is not configured".to_string())?;
     let client = collect_client_identity()?;
+    let client_token = load_client_token(&app)?
+        .ok_or_else(|| "Bellwake client token is unavailable".to_string())?;
+    let base_url = settings.server_url.trim_end_matches('/');
+    let url = format!("{base_url}/api/notifications/{notification_id}/acknowledge");
+
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|error| format!("Unable to create HTTP client: {error}"))?
+        .post(&url)
+        .bearer_auth(&client_token)
+        .header("X-Bellwake-Device-Id", &client.device.device_id)
+        .send()
+        .await
+        .map_err(|error| format!("Unable to acknowledge notification: {error}"))?;
+
+    let status = response.status();
+
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+
+        return Err(format!(
+            "Bellwake acknowledgement failed: HTTP {status}: {body}"
+        ));
+    }
+
+    let acknowledged = response
+        .json::<AcknowledgeApiResponse>()
+        .await
+        .map_err(|error| format!("Unable to decode acknowledgement: {error}"))?;
+
+    if acknowledged.notification_id != notification_id || !acknowledged.acknowledged {
+        return Err("Bellwake server did not confirm the acknowledgement".to_string());
+    }
 
     println!(
         "Notification {} acknowledged by {} on {}",
@@ -566,7 +692,7 @@ fn acknowledge_notification(
 
     Ok(AcknowledgeResult {
         notification_id,
-        acknowledged: true,
+        acknowledged: acknowledged.acknowledged,
         client,
     })
 }
@@ -611,9 +737,7 @@ async fn enroll_client(
 		.ok_or_else(|| {
 			"Bellwake server is not configured".to_string()
 		})?;
-	let client_token = load_secret(
-		KEYRING_CLIENT_TOKEN,
-	)?;
+	let client_token = load_client_token(&app)?;
 	let enrollment_token = enrollment_token
 		.map(|value| value.trim().to_string())
 		.filter(|value| !value.is_empty());
@@ -705,6 +829,8 @@ async fn enroll_client(
 				"Bellwake client token saved to system credential store."
 			);
 		}
+
+		cache_client_token(&app, client_token)?;
 	}
 
 	/*
@@ -742,6 +868,7 @@ async fn enroll_client(
 		&app,
 		&settings,
 	)?;
+	notify_mqtt_configuration_changed(&app);
 
 	Ok(settings)
 }
@@ -764,12 +891,15 @@ struct Notification {
 async fn get_notification(
 	app: tauri::AppHandle,
 	notification_id: u64,
-) -> Result<Notification, String> {
+) -> Result<Option<Notification>, String> {
 	let settings = load_client_settings_internal(&app)?
 		.ok_or_else(|| "Bellwake is not configured".to_string())?;
+	let identity = collect_client_identity()?;
+	let client_token = load_client_token(&app)?
+		.ok_or_else(|| "Bellwake client token is unavailable".to_string())?;
 
 	let base_url = settings.server_url.trim_end_matches('/');
-	let url = format!("{base_url}/api/notifications/{notification_id}");
+	let url = format!("{base_url}/api/notifications/{notification_id}/delivery");
 
 	let client = reqwest::Client::builder()
 		.timeout(std::time::Duration::from_secs(10))
@@ -778,9 +908,18 @@ async fn get_notification(
 
 	let response = client
 		.get(&url)
+		.bearer_auth(&client_token)
+		.header("X-Bellwake-Device-Id", &identity.device.device_id)
 		.send()
 		.await
 		.map_err(|error| format!("Unable to request notification: {error}"))?;
+
+	if response.status() == reqwest::StatusCode::NO_CONTENT {
+		#[cfg(debug_assertions)]
+		println!("Bellwake notification {notification_id} was already acknowledged");
+
+		return Ok(None);
+	}
 
 	if !response.status().is_success() {
 		return Err(format!(
@@ -789,10 +928,18 @@ async fn get_notification(
 		));
 	}
 
-	response
+	let notification = response
 		.json::<Notification>()
 		.await
-		.map_err(|error| format!("Unable to decode notification: {error}"))
+		.map_err(|error| format!("Unable to decode notification: {error}"))?;
+
+	#[cfg(debug_assertions)]
+	println!(
+		"Bellwake notification {} loaded from REST",
+		notification.id
+	);
+
+	Ok(Some(notification))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

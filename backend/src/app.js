@@ -42,7 +42,7 @@ const io = new Server(httpServer, {
  *   bellwake/notifications/17
  *   bellwake/notifications/42
  *
- * Payload:
+ * Содержимое сообщения:
  *
  *   {"notificationId":17}
  */
@@ -166,7 +166,7 @@ const reconcileNotifications = async ({ force = false } = {}) => {
 				/*
 				 * Публикуем если:
 				 *
-				 * - backend только подключился к MQTT;
+					 * - сервер только подключился к MQTT;
 				 * - уведомление только что стало действующим;
 				 * - уже действующее уведомление было изменено.
 				 */
@@ -180,10 +180,10 @@ const reconcileNotifications = async ({ force = false } = {}) => {
 
 			/*
 			 * Если уведомление больше не должно быть действующим,
-			 * снимаем retained marker.
+			 * снимаем retained-маркер.
 			 *
-			 * При force очищаем также старые retained сообщения,
-			 * оставшиеся в Mosquitto после перезапуска backend.
+			 * При принудительной синхронизации очищаем также старые retained-сообщения,
+			 * оставшиеся в Mosquitto после перезапуска сервера.
 			 */
 
 			if (force || publishedNotifications.has(notificationId)) {
@@ -193,8 +193,8 @@ const reconcileNotifications = async ({ force = false } = {}) => {
 		}
 
 		/*
-		 * Если запись была удалена из БД во время работы backend,
-		 * но её retained topic ещё существует — снимаем его.
+		 * Если запись была удалена из БД во время работы сервера,
+		 * но её retained-топик ещё существует — снимаем его.
 		 */
 		for (const notificationId of [...publishedNotifications.keys()]) {
 			if (existingIds.has(notificationId)) {
@@ -217,7 +217,7 @@ mqttClient.on("connect", async () => {
 	/*
 	 * На каждом новом подключении делаем полную синхронизацию.
 	 *
-	 * Это важно и после restart Node, и после restart Mosquitto.
+	 * Это важно после перезапуска как Node.js, так и Mosquitto.
 	 */
 	await reconcileNotifications({
 		force: true,
@@ -235,8 +235,8 @@ mqttClient.on("error", (error) => {
 /*
  * Раз в несколько секунд проверяем переходы временных границ:
  *
- * starts_at наступил  -> publish
- * expires_at наступил -> remove retained
+ * наступил starts_at  -> публикуем уведомление;
+ * наступил expires_at -> снимаем retained-сообщение.
  *
  * По умолчанию 5 секунд.
  */
@@ -247,7 +247,7 @@ setInterval(() => {
 const adminNamespace = io.of("/admin");
 
 adminNamespace.on("connection", (socket) => {
-	// TODO: protect this namespace with a real administrator session before production.
+	// TODO: перед публикацией защитить пространство имён реальной сессией администратора.
 	registerAdminNotificationHandlers(adminNamespace, socket);
 });
 

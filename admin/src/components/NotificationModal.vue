@@ -180,7 +180,7 @@ const save = async () => {
 		modal.hide();
 		emit("saved");
 	} catch {
-		// The shared Socket.IO handler has already shown the error modal.
+		// Общий обработчик Socket.IO уже показал окно с ошибкой.
 	} finally {
 		saving.value = false;
 	}

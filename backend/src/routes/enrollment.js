@@ -154,7 +154,7 @@ router.post("/", async (req, res, next) => {
 			try {
 				await connection.rollback();
 			} catch {
-				// Transaction may already be finished.
+				// Транзакция уже могла завершиться.
 			}
 		}
 
