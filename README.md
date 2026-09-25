@@ -81,12 +81,6 @@ npm run setup:admin
 ./backend/scripts/setup-admin.sh
 ```
 
-На типовой рабочей установке Bellwake серверный путь к сценарию:
-
-```text
-/var/www/bellwake.oncocentre.ru/backend/scripts/setup-admin.sh
-```
-
 Сценарий создаёт администратора только при пустой таблице `users`. Если пользователь уже существует, его пароль и остальные данные не изменяются.
 
 Сценарий настройки брокера ожидает TLS-файлы:
