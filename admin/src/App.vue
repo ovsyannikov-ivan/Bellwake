@@ -3,12 +3,14 @@ import { computed, inject, onBeforeUnmount, onMounted, ref } from "vue";
 import { Dropdown } from "bootstrap";
 import NotificationTable from "./components/NotificationTable.vue";
 import NotificationModal from "./components/NotificationModal.vue";
+import PairingModal from "./components/PairingModal.vue";
 import ModalError from "./components/ModalError.vue";
 import { socketServiceKey } from "./symbols.js";
 
 const { state } = inject(socketServiceKey);
 const tableRef = ref(null);
 const modalRef = ref(null);
+const pairingModalRef = ref(null);
 const themeDropdownButton = ref(null);
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 const themeMode = ref(document.documentElement.dataset.bsThemeMode ?? "auto");
@@ -50,6 +52,7 @@ onBeforeUnmount(() => {
 
 const openCreate = () => modalRef.value?.openCreate();
 const openEdit = (id) => modalRef.value?.openEdit(id);
+const openPairing = () => pairingModalRef.value?.open();
 const onChanged = (change) => modalRef.value?.notifyExternalChange(change);
 const onSaved = () => tableRef.value?.reload();
 </script>
@@ -66,6 +69,9 @@ const onSaved = () => tableRef.value?.reload();
 					<div class="connection-status" :class="state.connected ? 'is-online' : 'is-offline'" :title="state.connected ? 'Соединение установлено' : 'Переподключение к серверу'">
 						<span class="connection-dot" /><span class="d-none d-sm-inline">{{ state.connected ? "На связи" : "Нет связи" }}</span>
 					</div>
+					<button type="button" class="btn btn-primary navbar-action" title="Подключить устройство" aria-label="Подключить устройство" @click="openPairing">
+						<i class="bi bi-qr-code-scan" /><span class="d-none d-lg-inline">Подключить устройство</span>
+					</button>
 					<div class="dropdown">
 						<button ref="themeDropdownButton" type="button" class="btn btn-icon dropdown-toggle" data-bs-toggle="dropdown" aria-label="Выбрать цветовую тему" aria-haspopup="true" aria-expanded="false">
 							<i class="bi" :class="activeTheme.icon" />
@@ -99,6 +105,7 @@ const onSaved = () => tableRef.value?.reload();
 		</main>
 
 		<NotificationModal ref="modalRef" @saved="onSaved" />
+		<PairingModal ref="pairingModalRef" />
 		<ModalError />
 	</div>
 </template>

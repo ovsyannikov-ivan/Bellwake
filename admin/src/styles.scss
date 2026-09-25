@@ -44,6 +44,15 @@ table {
 	&-brand {
 		color: var(--bs-body-color);
 	}
+	&-action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		min-width: 2.5rem;
+		height: 2.5rem;
+		white-space: nowrap;
+	}
 }
 .brand {
 	&-icon {
