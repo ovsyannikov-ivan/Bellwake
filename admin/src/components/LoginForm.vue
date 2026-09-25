@@ -39,15 +39,7 @@ const submit = () => {
 				</div>
 				<div>
 					<label class="visually-hidden" for="login-password">Пароль</label>
-					<input
-						id="login-password"
-						v-model="password"
-						type="password"
-						class="form-control form-control-lg"
-						placeholder="Пароль"
-						autocomplete="current-password"
-						required
-					/>
+					<input id="login-password" v-model="password" type="password" class="form-control form-control-lg" placeholder="Пароль" autocomplete="current-password" required />
 				</div>
 				<div v-if="error" class="alert alert-danger mb-0" role="alert" aria-live="assertive">{{ error }}</div>
 				<button type="submit" class="btn btn-primary btn-lg login-submit" :disabled="submitting || !username.trim() || !password">
@@ -63,70 +55,64 @@ const submit = () => {
 .login-page {
 	display: grid;
 	min-height: 100vh;
-	padding: clamp(1rem, 4vw, 3rem);
+	padding: 1rem;
 	place-items: center;
-	background:
-		radial-gradient(circle at 50% 15%, rgba(var(--bs-primary-rgb), 0.12), transparent 38rem),
-		color-mix(in srgb, var(--bs-body-bg) 88%, var(--bs-secondary-bg));
+	background: radial-gradient(circle at 50% 15%, rgba(var(--bs-primary-rgb), 0.08), transparent 36rem), color-mix(in srgb, var(--bs-body-bg) 88%, var(--bs-secondary-bg));
 }
-
 .login-card {
-	width: min(100%, 50rem);
-	padding: clamp(2rem, 7vw, 6rem);
+	width: min(100%, 24.5rem);
+	padding: 3rem;
 	border: 1px solid var(--bs-border-color);
-	border-radius: clamp(1.5rem, 4vw, 3rem);
+	border-radius: 1.5rem;
 	background: var(--bs-body-bg);
-	box-shadow: 0 1.5rem 5rem rgba(var(--bs-dark-rgb), 0.18);
+	box-shadow: 0 1rem 3rem rgba(var(--bs-dark-rgb), 0.14);
 }
-
 .login-logo {
 	display: block;
-	width: clamp(5rem, 14vw, 7rem);
-	height: auto;
-	margin: 0 auto 2rem;
-	border-radius: 1.5rem;
-	box-shadow: 0 1rem 2.5rem rgba(var(--bs-primary-rgb), 0.22);
+	width: 3.5rem;
+	height: 3.5rem;
+	margin: 0 auto 1.5rem;
+	object-fit: contain;
 }
-
 .login-title {
-	margin: 0 0 clamp(2rem, 6vw, 4rem);
-	font-size: clamp(2rem, 5vw, 3rem);
+	margin: 0 0 2.25rem;
+	font-size: 1.5rem;
 	font-weight: 300;
+	line-height: 1.25;
 	text-align: center;
 }
-
 .login-form {
 	display: grid;
-	gap: 1.5rem;
-
+	gap: 1rem;
 	.form-control {
-		min-height: 5.25rem;
-		padding-inline: 1.5rem;
-		border-radius: 1rem;
+		min-height: 3.5rem;
+		padding: 0.75rem 0.85rem;
+		border-radius: 0.65rem;
 		background-color: var(--bs-body-bg);
-		font-size: clamp(1.1rem, 3vw, 1.45rem);
-		font-weight: 600;
+		font-size: 1rem;
 	}
 }
-
 .login-submit {
-	min-height: 5rem;
-	border-radius: 1rem;
-	font-size: 1.35rem;
+	min-height: 2.65rem;
+	padding: 0.55rem 1rem;
+	border-radius: 0.55rem;
+	font-size: 1rem;
 }
 
 @media (max-width: 575.98px) {
-	.login-card {
-		padding: 2rem 1.25rem;
+	.login-page {
+		padding: 1rem;
 	}
-
+	.login-card {
+		width: 100%;
+		max-width: 24.5rem;
+		padding: 2rem 1.5rem;
+	}
+	.login-title {
+		margin-bottom: 1.75rem;
+	}
 	.login-form {
-		gap: 1rem;
-
-		.form-control,
-		.login-submit {
-			min-height: 3.75rem;
-		}
+		gap: 0.85rem;
 	}
 }
 </style>
