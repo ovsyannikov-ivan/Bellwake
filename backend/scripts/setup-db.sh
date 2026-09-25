@@ -242,4 +242,4 @@ SQL
 echo
 echo "✓ Таблицы и миграции Bellwake применены без удаления существующих данных."
 
-node "${ROOT_DIR}/scripts/setup-admin.mjs"
+bash "${ROOT_DIR}/scripts/setup-admin.sh"
