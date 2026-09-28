@@ -11,7 +11,8 @@
 		"setup:env": "bash scripts/setup-env.sh",
 		"setup:broker": "sudo bash scripts/setup-mosquitto.sh",
 		"setup:db": "bash scripts/setup-db.sh",
-		"setup:admin": "bash scripts/setup-admin.sh"
+		"setup:admin": "bash scripts/setup-admin.sh",
+		"admin:add": "node scripts/add-admin.mjs"
 	},
 	"keywords": [],
 	"author": "Ivan Ovsyannikov",
